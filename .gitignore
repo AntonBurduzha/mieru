@@ -1,0 +1,44 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+
+# web
+node_modules/
+.nuxt/
+.output/
+dist/
+
+# downloaded data
+apps/backend/data/*.mmdb
+apps/backend/src/mieru/ingest/static/p.js
+
+# personal claude code files
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+
+# private working notes (kept locally, not published)
+docs/course/
+docs/tasks/
+docs/TASK_TEMPLATE.md
+docs/progress.md
+docs/learning-log.md
+docs/interview-gaps.md
+docs/retrospective.md
+# session workflow skills
+.claude/skills/session-start/
+.claude/skills/session-end/
+# vault sync script
+ops/sync-course.sh
+
+# finder's per-folder metadata file
+.DS_Store

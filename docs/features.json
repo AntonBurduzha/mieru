@@ -1,0 +1,156 @@
+[
+  {
+    "id": "T1",
+    "feature": "One script tag sends a page view with URL and referrer; the visit shows in the dashboard within 35 s",
+    "check": "pnpm --dir apps/tracker test && uv run pytest -m e2e tests/e2e/test_pipeline.py",
+    "session": "S8",
+    "passes": false
+  },
+  {
+    "id": "T2",
+    "feature": "SPA navigation (history.pushState to a new path) sends one page view; a query-string-only change does not",
+    "check": "pnpm --dir apps/tracker test && uv run pytest -m e2e tests/e2e/test_pipeline.py",
+    "session": "S8",
+    "passes": false
+  },
+  {
+    "id": "T3",
+    "feature": "Custom events with properties; calls made before the script loaded are sent once it loads",
+    "check": "pnpm --dir apps/tracker test && uv run pytest -m e2e tests/e2e/test_pipeline.py",
+    "session": "S8",
+    "passes": false
+  },
+  {
+    "id": "T4",
+    "feature": "Automated browsers (navigator.webdriver = true) send nothing",
+    "check": "pnpm --dir apps/tracker test && uv run pytest -m e2e tests/e2e/test_pipeline.py",
+    "session": "S8",
+    "passes": false
+  },
+  {
+    "id": "I1",
+    "feature": "Events for an unknown domain get 202 with X-Mieru-Dropped: unknown_site and are not stored",
+    "check": "uv run pytest tests/unit/ingest -k unknown_site",
+    "session": "S9",
+    "passes": false
+  },
+  {
+    "id": "I2",
+    "feature": "Bot user agents, spam referrers and over-limit traffic are dropped and counted per reason",
+    "check": "uv run pytest tests/unit/ingest tests/integration/ingest -k drop",
+    "session": "S9-S10",
+    "passes": false
+  },
+  {
+    "id": "I3",
+    "feature": "Each stored event has country, device, browser, OS, source and UTM tags",
+    "check": "uv run pytest tests/unit/writer -k enrich",
+    "session": "S11",
+    "passes": false
+  },
+  {
+    "id": "I4",
+    "feature": "Events less than 30 minutes apart are one session; a 31-minute gap starts a new one; midnight UTC does not split a session",
+    "check": "uv run pytest tests/integration/writer/test_sessions.py",
+    "session": "S12",
+    "passes": false
+  },
+  {
+    "id": "D1",
+    "feature": "Headline numbers (visitors, visits, page views, bounce rate, visit duration) for every period, in the site's timezone",
+    "check": "uv run pytest tests/integration/stats -k \"aggregate or timeseries\"",
+    "session": "S13",
+    "passes": false
+  },
+  {
+    "id": "D2",
+    "feature": "Trend chart by hour (ranges up to 2 days) or by day",
+    "check": "uv run pytest tests/integration/stats -k \"aggregate or timeseries\"",
+    "session": "S13",
+    "passes": false
+  },
+  {
+    "id": "D3",
+    "feature": "Top sources, UTM tags, pages, entry/exit pages, countries, devices, browsers and OS, 10 rows each with show more",
+    "check": "uv run pytest tests/integration/stats -k \"breakdown or realtime\"",
+    "session": "S14",
+    "passes": false
+  },
+  {
+    "id": "D4",
+    "feature": "Current visitors (last 5 minutes) refreshes every 30 s without reloading",
+    "check": "uv run pytest tests/integration/stats -k \"breakdown or realtime\"",
+    "session": "S14",
+    "passes": false
+  },
+  {
+    "id": "D5",
+    "feature": "Goals on an event name or page path, with conversions and conversion rate",
+    "check": "uv run pytest tests/integration/api -k \"goals or sharing\"",
+    "session": "S17",
+    "passes": false
+  },
+  {
+    "id": "D6",
+    "feature": "Clicking a breakdown row filters the whole dashboard; filters live in the URL",
+    "check": "pnpm --dir apps/web test:e2e",
+    "session": "S16",
+    "passes": false
+  },
+  {
+    "id": "D7",
+    "feature": "A secret link shows a read-only dashboard without login; revoking it breaks the link",
+    "check": "uv run pytest tests/integration/api -k \"goals or sharing\"",
+    "session": "S17",
+    "passes": false
+  },
+  {
+    "id": "D8",
+    "feature": "Comparison with the previous period, CSV export of any breakdown, read-only Stats API with API keys",
+    "check": "uv run pytest -k \"compare or csv or stats_api\"",
+    "session": "S14, S17, S29",
+    "passes": false
+  },
+  {
+    "id": "A1",
+    "feature": "Sign up, verify email by link, log in, log out; the session lasts 30 days and ends at once on logout",
+    "check": "uv run pytest tests/integration/api/test_auth.py",
+    "session": "S6",
+    "passes": false
+  },
+  {
+    "id": "A2",
+    "feature": "Adding a domain shows the snippet; the install check turns green after the first event",
+    "check": "uv run pytest tests/integration/api/test_sites.py",
+    "session": "S6, S22",
+    "passes": false
+  },
+  {
+    "id": "A3",
+    "feature": "Settings show events used this month vs quota and sites used vs the site limit",
+    "check": "uv run pytest tests/integration/worker/test_usage.py",
+    "session": "S18",
+    "passes": false
+  },
+  {
+    "id": "A4",
+    "feature": "Stripe Checkout (test mode) upgrades the plan within a minute; the customer portal cancels it",
+    "check": "uv run pytest tests/integration/api/test_billing.py",
+    "session": "S19",
+    "passes": false
+  },
+  {
+    "id": "A5",
+    "feature": "A spike alert fires once per hour at most; a weekly report arrives Monday morning in my timezone",
+    "check": "uv run pytest tests/integration/worker/test_alerts.py",
+    "session": "S21",
+    "passes": false
+  },
+  {
+    "id": "A6",
+    "feature": "Alerts go to email and Telegram, each verified before use",
+    "check": "uv run pytest tests/integration/worker/test_notifications.py",
+    "session": "S20",
+    "passes": false
+  }
+]
