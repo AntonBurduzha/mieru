@@ -148,7 +148,7 @@
   },
   {
     "id": "A6",
-    "feature": "Alerts go to email and Telegram, each verified before use",
+    "feature": "Alerts go to email addresses, each verified before use",
     "check": "uv run pytest tests/integration/worker/test_notifications.py",
     "session": "S20",
     "passes": false

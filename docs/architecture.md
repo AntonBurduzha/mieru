@@ -82,7 +82,7 @@ flowchart LR
 | A3  | Plans with a monthly event quota and a site limit; usage shown in settings                |
 | A4  | Upgrade and cancel through Stripe Checkout and the customer portal (test mode)            |
 | A5  | Spike alert when current visitors pass a threshold; weekly report                         |
-| A6  | Alerts by email and Telegram                                                              |
+| A6  | Alerts by email, to verified addresses                                                    |
 
 ---
 
@@ -351,7 +351,7 @@ erDiagram
     notification_channels {
         uuid id PK
         uuid organization_id FK
-        text kind "email | telegram"
+        text kind "email"
         text target
         timestamptz verified_at
     }
