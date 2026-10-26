@@ -1,0 +1,58 @@
+name: mieru
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: mieru
+      POSTGRES_PASSWORD: mieru
+      POSTGRES_DB: mieru
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mieru -d mieru"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.34.13
+    environment:
+      CLICKHOUSE_DB: mieru
+      CLICKHOUSE_USER: mieru
+      CLICKHOUSE_PASSWORD: mieru
+    ports:
+      - "127.0.0.1:8123:8123"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./ops/clickhouse/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "mieru", "--password", "mieru", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  redis-data:
+  clickhouse-data:
