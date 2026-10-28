@@ -1,0 +1,61 @@
+[project]
+name = "mieru"
+version = "0.1.0"
+description = "Privacy-first web analytics: ingest, dashboard API, writer and worker"
+readme = "README.md"
+authors = [
+    { name = "Anton Burduzha", email = "anton.burduzha@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.20.1",
+    "asyncpg>=0.32.0",
+    "clickhouse-connect[async]>=1.11.0",
+    "fastapi[standard]>=0.162.0",
+    "pydantic-settings>=2.16.1",
+    "redis>=8.1.0",
+    "sqlalchemy[asyncio]>=2.1.6",
+    "structlog>=26.1.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.2",
+    "time-machine>=3.5.1",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF", "PT"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+markers = [
+  "integration: needs postgres/redis/clickhouse from compose",
+  "e2e: needs every service running",
+  "slow: longer than a second",
+]
+addopts = "-m 'not e2e' --strict-markers --import-mode=importlib"
