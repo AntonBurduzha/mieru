@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: mieru
+          POSTGRES_PASSWORD: mieru
+          POSTGRES_DB: mieru
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mieru -d mieru"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8.34.13
+        env:
+          CLICKHOUSE_DB: mieru
+          CLICKHOUSE_USER: mieru
+          CLICKHOUSE_PASSWORD: mieru
+        ports: ["8123:8123"]
+        options: --ulimit nofile=262144:262144
+    env:
+      DATABASE_URL: postgresql+asyncpg://mieru:mieru@localhost:5432/mieru
+      REDIS_URL: redis://localhost:6379/0
+      CLICKHOUSE_URL: http://mieru:mieru@localhost:8123/mieru
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.1"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src
+      - name: Wait for ClickHouse
+        run: curl -fsS --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8123/ping
+      - run: uv run pytest
