@@ -24,12 +24,11 @@ In another terminal, `curl localhost:8000/health/ready` prints `{"postgres":"ok"
 
 ## Production stack, rehearsed locally
 
-`compose.prod.yaml` is the stack the server runs: nginx with TLS in front of two ingest replicas, the api, Postgres, Redis and ClickHouse. It runs on a Mac with a self-signed certificate (ports 80 and 443 must be free):
+`compose.prod.yaml` is the stack the server runs: Caddy with TLS in front of two ingest replicas, the api, Postgres, Redis and ClickHouse. On a Mac it runs on `localhost`, where Caddy signs its own certificates (ports 80 and 443 must be free):
 
 ```bash
 docker build -f apps/backend/Dockerfile --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t ghcr.io/antonburduzha/mieru-app:local .
-COMPOSE_ENV_FILES=ops/rehearsal.env ops/nginx/self-signed-cert.sh localhost
 docker compose -f compose.prod.yaml --env-file ops/rehearsal.env up -d --wait
 curl -sk https://localhost/api/v1/version       # the commit the image was built from
 curl -sk https://in.localhost/health/ready      # {"redis":"ok"}

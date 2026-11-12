@@ -1,0 +1,130 @@
+# Mieru's edge: TLS, routing, headers and log filters for both sites.
+# {$VAR} is replaced from the container's environment when Caddy reads this file.
+{
+	email {$ACME_EMAIL}
+
+	# HTTP/1.1 and HTTP/2 only: no HTTP/3, so the firewall stays at TCP 80 and 443
+	servers {
+		protocols h1 h2
+	}
+
+	# Every log line that isn't a site's access log (errors, TLS, health checks, ACME, admin API).
+	# Error lines carry the request, so its address, headers, TLS details and query are deleted.
+	# ACME challenge and admin API lines put the peer's address and headers at the top level.
+	# INFO, never DEBUG: at DEBUG, failed TLS handshakes print the client address in the message.
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+				request>tls delete
+				request>uri regexp \?.*$ ""
+				remote delete
+				remote_ip delete
+				remote_port delete
+				headers delete
+			}
+		}
+		level INFO
+	}
+}
+
+# Security headers for both sites (conventions section 7.5).
+# A header deletion makes Caddy apply the whole block just before the response
+# is written, so it also covers headers the apps and the proxy set.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+		-Via
+	}
+}
+
+# How every proxied request is passed on
+(proxy_settings) {
+	# The client IP is the TCP peer Caddy saw; whatever the client sent is dropped
+	header_up X-Real-IP {remote_host}
+	header_up -X-Forwarded-For
+	header_up -Forwarded
+	transport http {
+		dial_timeout 1s
+		# Below uvicorn's 5 s, so Caddy never reuses a connection the app is closing
+		keepalive 4s
+	}
+}
+
+# The dashboard and its API
+{$MIERU_DOMAIN} {
+	import security_headers
+	header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+
+	log {
+		output stderr
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+				request>tls delete
+				request>uri regexp \?.*$ ""
+				resp_headers delete
+			}
+		}
+	}
+
+	@api path /api/* /health /health/ready
+	handle @api {
+		reverse_proxy api:8000 {
+			import proxy_settings
+		}
+	}
+
+	# Until the web app is served from here (T20)
+	handle {
+		respond "Mieru is coming soon" 200
+	}
+}
+
+# Ingest: called from every customer's site, so no access log at all
+in.{$MIERU_DOMAIN} {
+	import security_headers
+	header Access-Control-Allow-Origin "*"
+
+	reverse_proxy ingest-1:8001 ingest-2:8001 {
+		lb_policy round_robin
+		# A request that can't connect is tried again on a replica that is up, for up to 5 s
+		lb_try_duration 5s
+		lb_try_interval 100ms
+		# Passive check: a failed request takes the replica out for 5 s
+		fail_duration 5s
+		# Active check: each replica's /health every 2 s
+		health_uri /health
+		health_interval 2s
+		health_timeout 1s
+		import proxy_settings
+	}
+}
+
+# Any other host name: close the connection without an answer
+http:// {
+	abort
+}
+
+https:// {
+	abort
+}
+
+# Docker's healthcheck, reachable only from inside the container
+:8080 {
+	bind 127.0.0.1
+	respond /healthz "ok" 200
+}
