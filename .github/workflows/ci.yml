@@ -100,16 +100,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Same inputs as the image job, so every layer comes from its cache
+      # Mostly cache hits from the image job; still smoke-tested here, so the
+      # image pushed is exactly the one that was imported
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: apps/backend/Dockerfile
           build-args: GIT_SHA=${{ github.sha }}
-          push: true
+          load: true
+          push: false
           # GHCR names in lowercase
           tags: |
             ghcr.io/antonburduzha/mieru-app:${{ github.sha }}
             ghcr.io/antonburduzha/mieru-app:main
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
+      - name: Import smoke test
+        run: docker run --rm ghcr.io/antonburduzha/mieru-app:${{ github.sha }} python -c "import mieru.api.app, mieru.ingest.app"
+      - name: Push
+        run: docker push --all-tags ghcr.io/antonburduzha/mieru-app
