@@ -130,8 +130,8 @@ flowchart LR
 
 | Service | Start command | Local port | Exists |
 |---|---|---|---|
-| `api` | `uv run uvicorn mieru.api.app:app --reload --port 8000` | 8000 | yes |
-| `ingest` | `uv run uvicorn mieru.ingest.app:app --reload --port 8001` | 8001 | yes |
+| `api` | `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000` | 8000 | yes |
+| `ingest` | `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001` | 8001 | yes |
 | `writer` | `uv run python -m mieru.writer` | none | later |
 | `worker` | `uv run python -m mieru.worker` (an asyncio scheduler loop; no task queue in the MVP) | none | later |
 | `web` | `pnpm --dir apps/web dev` (Vite; proxies `/api` to port 8000) | 3000 | later |
@@ -149,7 +149,7 @@ flowchart LR
 | `/api/v1/version` (api), `/version` (ingest) | `{"version": GIT_SHA}` |
 | `/api/v1/openapi.json`, `/api/v1/docs` | `api` only; ingest has no OpenAPI |
 
-**Settings.** Every backend setting is in `.env.example`, with a comment, and is read by `mieru.core.config.Settings`. Add a setting in both places in the same commit. Secrets are `SecretStr`.
+**Settings.** Every backend setting is in `.env.example`, with a comment, and is read by `mieru.core.config.Settings`. Add a setting in both places in the same commit. Secrets are `SecretStr`, and URLs that carry a password are `Secret[...]` (for example `Secret[PostgresDsn]`); read them with `.get_secret_value()`.
 
 **Data names**
 
@@ -496,7 +496,7 @@ A task in an area merges only when its rows hold.
 
 | Area | Must be true |
 |---|---|
-| Config and startup | Secrets are `SecretStr`; no debug or API docs exposure in `ENV=prod`; 500s hide internals in prod |
+| Config and startup | Secrets are `SecretStr` or `Secret[...]`; no debug or API docs exposure in `ENV=prod`; 500s hide internals in prod |
 | Server and deploy | Firewall 22/80/443; SSH keys only; only nginx publishes ports; HTTP redirects to HTTPS |
 | Auth | argon2id; hashed session tokens; cookie flags; login limiter; generic errors; the Origin check |
 | Ingest | Size limits; IP discarded; drop reasons counted; `X-Real-IP` only |

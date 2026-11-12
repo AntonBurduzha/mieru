@@ -41,7 +41,7 @@ Commands run from the repo root, each with the output that proves it. The verifi
 
 ```bash
 uv run --directory apps/backend ruff check . && uv run --directory apps/backend ruff format --check .
-uv run --directory apps/backend mypy src
+uv run --directory apps/backend mypy src tests
 uv run --directory apps/backend pytest            # needs `docker compose up -d`
 ```
 

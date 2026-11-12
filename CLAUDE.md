@@ -35,9 +35,9 @@ The developer is the only author: commits and PR descriptions carry no `Co-Autho
 From `apps/backend`:
 - `uv run pytest -m "not integration and not e2e"`: unit tests, no services needed
 - `uv run pytest`: unit and integration tests; needs `docker compose up -d`
-- `uv run ruff check --fix . && uv run ruff format . && uv run mypy src`
-- `uv run uvicorn mieru.api.app:app --reload --port 8000`
-- `uv run uvicorn mieru.ingest.app:app --reload --port 8001`
+- `uv run ruff check --fix . && uv run ruff format . && uv run mypy src tests`
+- `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000`
+- `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001`
 
 From the repo root:
 - `docker compose up -d`: Postgres, Redis, ClickHouse

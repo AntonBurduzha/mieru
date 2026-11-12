@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from pydantic import RedisDsn
+from pydantic import AnyHttpUrl, RedisDsn, Secret
 
 from mieru.api.app import create_app
 from mieru.core.config import Settings
@@ -22,7 +22,7 @@ async def test_ready_when_all_dependencies_answer(api_client: httpx.AsyncClient)
 
 async def test_not_ready_when_redis_is_down(settings: Settings) -> None:
     # Port 1 has nothing listening: same effect as a stopped Redis, without touching compose
-    broken = settings.model_copy(update={"redis_url": RedisDsn("redis://localhost:1/15")})
+    broken = settings.model_copy(update={"redis_url": Secret(RedisDsn("redis://localhost:1/15"))})
     app = create_app(broken)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -30,6 +30,19 @@ async def test_not_ready_when_redis_is_down(settings: Settings) -> None:
             response = await client.get("/health/ready")
     assert response.status_code == 503
     assert response.json() == {"postgres": "ok", "redis": "error", "clickhouse": "ok"}
+
+
+async def test_starts_and_not_ready_when_clickhouse_is_down(settings: Settings) -> None:
+    # Port 1 has nothing listening; the api must still start and report the outage
+    down = Secret(AnyHttpUrl("http://mieru:mieru@localhost:1/mieru"))
+    broken = settings.model_copy(update={"clickhouse_url": down})
+    app = create_app(broken)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"postgres": "ok", "redis": "ok", "clickhouse": "error"}
 
 
 async def test_version(api_client: httpx.AsyncClient, settings: Settings) -> None:

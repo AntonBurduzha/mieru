@@ -7,7 +7,7 @@ from mieru.core.config import Settings
 def make_engine(settings: Settings) -> AsyncEngine:
     """Build the engine and its pool"""
     return create_async_engine(
-        str(settings.database_url),
+        str(settings.database_url.get_secret_value()),
         pool_size=5,
         pool_pre_ping=True,
         connect_args={"timeout": 2},

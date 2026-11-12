@@ -30,4 +30,4 @@ EXPOSE 8000 8001
 
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
-CMD ["uvicorn", "mieru.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "--factory", "mieru.api.app:create_app", "--host", "0.0.0.0", "--port", "8000"]

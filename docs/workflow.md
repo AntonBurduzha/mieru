@@ -29,15 +29,15 @@ docker compose ps                    # all three "running (healthy)"; ClickHouse
 
 cd apps/backend
 uv sync                              # creates .venv with Python 3.13 and the locked dependencies
-uv run ruff check . && uv run mypy src
+uv run ruff check . && uv run mypy src tests
 uv run pytest                        # unit and integration tests
 ```
 
 Then start the two apps, one per terminal, from `apps/backend`:
 
 ```bash
-uv run uvicorn mieru.api.app:app --reload --port 8000
-uv run uvicorn mieru.ingest.app:app --reload --port 8001
+uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000
+uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001
 ```
 
 - `curl localhost:8000/health/ready` prints `{"postgres":"ok","redis":"ok","clickhouse":"ok"}`.
@@ -110,6 +110,7 @@ Everything between the two gates runs without you in agent mode. Each run of `/t
 | `/task <ID>` | Moves the task one stage forward from its status (section 3) | The spec, a build report at gate 2, or the push command at the end |
 | `/task <ID> --human` / `--agent` | Same, with the mode overridden. Only before the build starts | |
 | `/verify <ID>` | Runs the proof-of-done check in a separate read-only agent | `VERDICT: DONE / FAIL / NEED_HUMAN` with evidence per criterion |
+| `/commit [one] [hint]` | Commits the changes you reviewed as small conventional commits, with messages from the diff. With something staged, commits only that. Then rewrites the PR description in `.git/pr-<ID>.md`. Never pushes | The new commits, the PR description, and the push line |
 | `/code-review` | Claude Code's built-in bug-focused review of the current diff | Findings; an optional second opinion next to the spec-aware reviewer |
 | `! <command>` | Runs a shell command yourself, inside the session | Used for `git push`, which Claude is not allowed to run |
 
@@ -118,6 +119,7 @@ Everything between the two gates runs without you in agent mode. Each run of `/t
 | Part | Role |
 |---|---|
 | `skills/task/` | The `/task` procedure, the spec template, and the private human-mode tutorial template |
+| `skills/commit/` | The `/commit` procedure: grouping, message rules, what never gets committed |
 | `agents/test-writer.md` | Writes the failing tests from the spec; never touches implementation |
 | `agents/verifier.md` | Runs every check and gives the verdict; can't edit files |
 | `agents/reviewer.md` | Reviews the diff against the spec in a fresh context; can't edit files |

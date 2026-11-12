@@ -78,7 +78,7 @@ Track progress in the spec's Notes, so an interrupted run can resume. Use `git l
 3. **Check locally:**
    - `uv run --directory apps/backend ruff check .`
    - `uv run --directory apps/backend ruff format --check .`
-   - `uv run --directory apps/backend mypy src`
+   - `uv run --directory apps/backend mypy src tests`
    - the tests the spec names, plus the web and tracker checks when they changed.
 4. **Commit** in small conventional commits (tests together with the code they cover). Every commit passes the checks.
 5. **Verify.** Use the `verifier` subagent with the spec path. On FAIL, fix the cause and verify again. After three FAILs in a row, record the last report in the spec's Review section, keep `status: build`, and stop with the report.

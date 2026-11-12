@@ -6,7 +6,7 @@ from mieru.core.config import Settings
 def connect(settings: Settings) -> Redis:
     """Build a client with its own connection pool"""
     return Redis.from_url(
-        str(settings.redis_url),
+        str(settings.redis_url.get_secret_value()),
         decode_responses=True,
         socket_connect_timeout=2,
         socket_timeout=2,

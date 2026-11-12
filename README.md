@@ -17,7 +17,7 @@ docker compose up -d                    # Postgres, Redis, ClickHouse
 cd apps/backend
 uv sync
 uv run pytest                           # unit and integration tests
-uv run uvicorn mieru.api.app:app --reload --port 8000
+uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000
 ```
 
 In another terminal, `curl localhost:8000/health/ready` prints `{"postgres":"ok","redis":"ok","clickhouse":"ok"}`.

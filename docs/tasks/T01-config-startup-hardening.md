@@ -2,7 +2,7 @@
 id: T01
 title: Config and startup hardening
 mode: agent
-status: spec
+status: done
 features: []
 depends: []
 branch: t01-config-startup-hardening
@@ -93,3 +93,51 @@ Expected: every command exits 0. pytest shows the new tests passing, no new skip
 - Size: about 350-400 changed lines, a little over the ~300 guideline for agent tasks. To shrink it, move criteria 13 and 15 (pre-commit and CI) into their own task.
 
 ## Review
+
+### Verifier (2026-11-12, after the review fixes): NEED_HUMAN
+
+Every `auto:` criterion and every proof-of-done command passed; criterion 15 waits for a CI run on the PR.
+
+| # | Evidence |
+|---|---|
+| 1 | `-k env_required`: 1 passed |
+| 2 | `-k "cookie_secure or internal_errors or docs"`: 7 passed |
+| 3 | `-k ttl`: 2 passed |
+| 4 | `-k crash_flag`: 1 passed |
+| 5 | `-k secret`: 4 passed (includes `test_validation_errors_hide_secrets`) |
+| 6 | `-k env_file`: 4 passed |
+| 7 | `-k locals`: 1 passed |
+| 8 | `-k import`: 2 passed |
+| 9 | ClickHouse-down integration test and the retry unit test: 2 passed |
+| 10 | `-k closes`: 1 passed |
+| 11 | the ruff probe reports TID251 and DTZ005 (count 2) |
+| 12 | `mypy src tests`: no issues in 29 source files |
+| 13 | `pre-commit run --all-files`: ruff check, ruff format, mypy passed, in that order |
+| 14 | the grep finds no `mieru.(api\|ingest).app:app` |
+| 15 | human: not yet confirmed; `ci.yml` matches on reading |
+
+Proof of done: ruff and format clean; mypy clean; pytest 59 passed, no skips, `TOTAL 341 10 97%`; pre-commit exit 0; the image builds and imports both apps with no output. Scope and test integrity: clean.
+
+### Reviewer findings
+
+1. **Must-fix:** a failed `Settings` validation echoed its input, DSN passwords included, into the error that uvicorn prints. Fixed in `581776a` (`hide_input_in_errors=True`, plus `test_validation_errors_hide_secrets`). `exc.errors()` still holds the input by pydantic's design; future error reporting must call `errors(include_input=False)`.
+2. **Should-fix:** the `publish` job pushed a second build that was never smoke-tested. Fixed in `9261978`: `publish` loads its build, imports both apps from it, then pushes that image.
+3. *Optional, applied at gate 2:* `ClickHouse.close()` didn't take the lock, so a connect still in flight at shutdown could leave a client open. `close()` now takes the lock; `test_close_waits_for_a_connect_in_flight` failed before the change.
+4. *Optional, applied at gate 2:* no test covered the lock. `test_concurrent_first_calls_connect_once` added; it fails when the lock is removed.
+5. *Optional, applied at gate 2:* `CLAUDE.md`, `docs/workflow.md`, `.claude/skills/task/SKILL.md` and `.claude/skills/task/spec-template.md` said `mypy src`; now `mypy src tests`. The developer approved these files beyond the allowed list.
+6. *Optional, applied at gate 2:* `actions/checkout` is pinned to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) with `persist-credentials: false` in all three jobs.
+
+### Gate 2 (2026-11-12)
+- The developer ran "Test it yourself" and confirmed it works.
+- Criterion 15 is still open: it needs this branch's CI run, so it is checked after the push. The final verifier run waits for that.
+- After the optional fixes: ruff, format and `mypy src tests` clean; pytest 61 passed, `TOTAL 342 10 97%`; pre-commit passed.
+
+### Final verification (2026-11-12): DONE
+
+- The verifier ran every `auto:` criterion and the proof of done on `feb36db`: all exit 0. pytest: 61 passed, no skips, `TOTAL 342 10 97%`.
+- Criterion 15 was confirmed on PR #6 (CI run 43231435714), by the developer and by the verifier:
+  - `backend`: `ENV: test`, `mypy src tests`, and the coverage table at the end.
+  - `image`: build plus the import smoke test, with no push step.
+  - `publish`: skipped.
+- Scope note: the developer asked for the `/commit` skill (`.claude/skills/commit/`, plus its rows in `docs/workflow.md`) during this task. It is workflow tooling outside the allowed list. It doesn't link any private file; it only names private paths so it never commits them.
+- `docs/features.json`: no change, because the task has no features.
