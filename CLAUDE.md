@@ -1,27 +1,45 @@
-# Mieru - context for Claude Code
-Privacy-first web analytics (Plausible-like). Monorepo:
-apps/backend (Python 3.13, uv, FastAPI, src/mieru), apps/web (Nuxt 4, TS, pnpm), apps/tracker (plain JS).
-Design: docs/architecture.md. Decisions: docs/adr/. Feature checklist: docs/features.json.
+# Mieru: context for Claude Code
 
-## Implementing a spec
-When a prompt names a spec in docs/specs/: edit only the files the spec allows, write or keep the
-tests, run the checks, show the output. Never delete, skip or weaken a test.
+Privacy-first web analytics (Plausible-like): a 1 KB tracking script, no cookies, one dashboard page.
+Monorepo: `apps/backend` (Python 3.13, uv, FastAPI, package `mieru` under `src/`), `apps/web` (React, not started), `apps/tracker` (plain JS, not started).
 
-## Conventions
-- Layers: api/routes -> services -> repositories -> models. Routes never touch SQL.
-- Pipelines (ingest, writer): pure step functions + thin I/O adapters.
-- Every tenant query is scoped by org_id/site_id. site_id for ClickHouse comes from the server.
-- Never log IPs, user agents or request bodies. The raw IP never leaves mieru.ingest.
-- Time comes from mieru.core.clock, never datetime.now().
-- Errors: raise AppError subclasses. Async everywhere; blocking work via asyncio.to_thread.
+## Docs: read the one the work needs
+- `docs/product.md`: what Mieru does and for whom; stories with acceptance criteria; MVP scope.
+- `docs/architecture.md`: the system design. Section 13 holds the decisions.
+- `docs/frontend.md`: the design of the React app.
+- `docs/conventions.md`: layout, names, code style, tests, security. It wins when docs disagree.
+- `docs/roadmap.md`: the "Now" block and the task list.
+- `docs/workflow.md`: how a task runs (`/task`, `/verify`, `/status`).
+- `docs/features.json`: one entry per feature, with the command that proves it.
 
-## Commands (from apps/backend unless noted)
-- uv run pytest            # unit + integration (needs `docker compose up -d` at repo root)
-- uv run pytest -m e2e     # full pipeline
-- uv run ruff check --fix . && uv run ruff format . && uv run mypy src
-- pnpm --dir apps/web test / lint / typecheck ; pnpm --dir apps/tracker build
-- docker compose up -d     # postgres, redis, clickhouse
+## State today
+Built: the `api` and `ingest` apps with `/health`, `/health/ready` and version endpoints; settings; JSON logs with request ids; the error handler; local Compose; CI against real databases; the image pushed to GHCR from `main`.
+Not built yet: Postgres models, auth, the ingest pipeline, writer, worker, web app, tracker, the server.
 
-## Feature checklist
-Never mark a feature in docs/features.json as passing without running its check.
-When compacting, keep: files changed, failing tests, open questions.
+## Rules that never bend
+- Layers: `api/routes -> services -> repositories -> models`. Routes never touch SQL.
+- Pipelines (ingest, writer): pure step functions plus thin I/O adapters.
+- Every tenant query is scoped by `org_id` or `site_id`. The ClickHouse `site_id` comes from the server, never the client.
+- Never log or store IPs, user agents or request bodies. The raw IP never leaves `mieru.ingest`.
+- Time comes from `mieru.core.clock`, never `datetime.now()`.
+- Errors: raise `AppError` subclasses. Async everywhere; blocking work goes through `asyncio.to_thread`.
+- Never delete, skip or weaken a test. If a test looks wrong, say so and stop.
+- Never mark a feature in `docs/features.json` as passing without running its check.
+- Public files never link to private ones (`docs/learn/`, `CLAUDE.local.md`).
+
+## Working on a task
+Each task has a spec in `docs/tasks/T<NN>-<slug>.md`. Edit only the files the spec allows, write the tests first, run the proof-of-done commands and show their output. Never push; the developer pushes and opens the PR. Details: `docs/workflow.md`.
+
+## Commands
+From `apps/backend`:
+- `uv run pytest -m "not integration and not e2e"`: unit tests, no services needed
+- `uv run pytest`: unit and integration tests; needs `docker compose up -d`
+- `uv run ruff check --fix . && uv run ruff format . && uv run mypy src`
+- `uv run uvicorn mieru.api.app:app --reload --port 8000`
+- `uv run uvicorn mieru.ingest.app:app --reload --port 8001`
+
+From the repo root:
+- `docker compose up -d`: Postgres, Redis, ClickHouse
+
+## When compacting
+Keep: the task id and its status, the files changed, failing tests, open questions.

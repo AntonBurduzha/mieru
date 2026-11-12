@@ -13,32 +13,23 @@ __pycache__/
 
 # web
 node_modules/
-.nuxt/
-.output/
 dist/
 
 # downloaded data
 apps/backend/data/*.mmdb
 apps/backend/src/mieru/ingest/static/p.js
 
+# dev email outbox
+apps/backend/.outbox/
+
 # personal claude code files
 .claude/settings.local.json
 .claude/worktrees/
 CLAUDE.local.md
 
-# private working notes (kept locally, not published)
-docs/course/
-docs/tasks/
-docs/TASK_TEMPLATE.md
-docs/progress.md
-docs/learning-log.md
-docs/interview-gaps.md
-docs/retrospective.md
-# session workflow skills
-.claude/skills/session-start/
-.claude/skills/session-end/
-# vault sync script
-ops/sync-course.sh
+# private: human-mode tutorials and their template
+docs/learn/
+.claude/skills/task/human.md
 
 # finder's per-folder metadata file
 .DS_Store

@@ -1,15 +1,24 @@
+## Task
+
+Spec: `docs/tasks/T<NN>-<slug>.md` · Mode: agent | human · Features: <ids, or none>
+
 ## What and why
 
-## How I verified it (paste commands and output, screenshots for UI)
+## Proof of done
+
+Verifier verdict: DONE
+
+<!-- Paste the commands and the lines of output that prove each acceptance criterion. Screenshots for UI. -->
 
 ## Risk
 
-- [ ] Touches ingest/writer hot path
-- [ ] Migration
-- [ ] Privacy-relevant
+- [ ] Touches the ingest or writer hot path
+- [ ] Migration (Postgres or ClickHouse)
+- [ ] Privacy-relevant (IPs, user agents, logs, stored fields)
 
 ## Checklist
 
-- [ ] Tests added or updated, none deleted or skipped
-- [ ] features.json updated
-- [ ] Self-reviewed the full diff
+- [ ] I tested it myself with the spec's "Test it yourself" steps
+- [ ] Tests added or updated; none deleted, skipped or weakened
+- [ ] `docs/features.json` flipped only for checks that ran green
+- [ ] I read the full diff
