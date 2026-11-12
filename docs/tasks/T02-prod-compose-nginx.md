@@ -68,7 +68,7 @@ The production stack runs on the Mac from one file, `compose.prod.yaml`. nginx t
   - **The ingest host:** every path → upstream `ingest`; `access_log off`; `Access-Control-Allow-Origin: *`.
   - **Both hosts:** the headers in conventions section 7.5, `server_tokens off`, `proxy_set_header X-Real-IP $remote_addr;` and `proxy_set_header X-Forwarded-For "";`.
   - **Upstreams:** a `zone`, `server <name>:<port> resolve max_fails=1 fail_timeout=5s`, and `resolver 127.0.0.11 valid=5s`. Proxying uses `proxy_next_upstream error timeout` and `proxy_connect_timeout 1s`.
-  - **Error log:** `error_log stderr crit`. **Unknown hosts:** the default server answers `444` on port 80 and uses `ssl_reject_handshake on` on 443.
+  - **Error log:** `error_log stderr emerg`. **Unknown hosts:** the default server answers `444` on port 80 and uses `ssl_reject_handshake on` on 443.
   - **Healthcheck:** `wget` on `http://127.0.0.1:8080/healthz`, a server that listens on loopback only and has its access log off.
 
 ## Acceptance criteria
@@ -113,7 +113,7 @@ Filled in after the build. Candidates: the `ingest` upstream with its `resolve` 
 ## Notes
 Decisions to record in `docs/architecture.md`:
 - **Upstreams re-resolve names (`resolve`, Docker DNS at `127.0.0.11`).** A recreated container can get a new IP. Without `resolve`, nginx keeps the old one until a reload. `resolve` is in open-source nginx since 1.27.3. The alternative is `nginx -s reload` after every restart.
-- **`error_log crit`.** nginx error lines always carry `client: <ip>`. The cost: failed upstream connections don't show in nginx's log. The apps' logs and the healthchecks cover them.
+- **`error_log emerg`.** nginx's runtime error lines carry `client: <ip>`, even at `crit`: failed TLS handshakes log there. Only `emerg` (startup and config) is free of IPs. The cost: runtime problems, failed upstream connections included, don't show in nginx's log. The apps' logs and the healthchecks cover them.
 - **`/health` and `/health/ready` on the dashboard host go to `api`.** M0 checks `https://<dashboard host>/health/ready`. The alternative, moving the routes under `/api/v1/`, would change Python and the deploy's health checks.
 - **No `env_file`.** Every app variable is listed in `compose.prod.yaml`, so nothing on the server can override the image's `GIT_SHA` by accident.
 - **The domain is a variable.** T02 rehearses on `localhost`, and the real domain is chosen in T03.
