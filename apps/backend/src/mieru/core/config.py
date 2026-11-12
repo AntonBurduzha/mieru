@@ -15,7 +15,11 @@ class Settings(BaseSettings):
     Values come from the environment only. get_settings() adds the repo's .env file.
     """
 
-    model_config = SettingsConfigDict(env_ignore_empty=True, extra="ignore")
+    # hide_input_in_errors: a ValidationError would otherwise echo the raw values,
+    # passwords included, into the startup traceback
+    model_config = SettingsConfigDict(
+        env_ignore_empty=True, extra="ignore", hide_input_in_errors=True
+    )
 
     # Required, so a missing ENV can never fall back to a debug-friendly default
     env: Literal["local", "test", "prod"]

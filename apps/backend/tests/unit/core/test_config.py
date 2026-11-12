@@ -1,3 +1,4 @@
+import traceback
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -86,6 +87,37 @@ def test_secret_dsns_not_printed() -> None:
     assert str(settings.database_url.get_secret_value()) == DATABASE_URL
     assert str(settings.redis_url.get_secret_value()) == REDIS_URL
     assert str(settings.clickhouse_url.get_secret_value()) == CLICKHOUSE_URL
+
+
+# pydantic shortens a long input to its first and last ~24 characters in errors, so these
+# URLs are short enough for the password to show in full if the input is printed at all
+SHORT_URLS: dict[str, object] = {
+    "database_url": f"postgresql://u:{PASSWORD}@db/m",
+    "redis_url": f"redis://:{PASSWORD}@r/0",
+    "clickhouse_url": f"http://u:{PASSWORD}@ch/m",
+}
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"env": None},  # ENV missing: the error echoes every other input
+        {"database_url": f"postgresql://u:{PASSWORD}@db:x/m"},  # not a port
+        {"env": "prod", "writer_test_crash_after_insert": True},
+    ],
+)
+def test_validation_errors_hide_secrets(overrides: dict[str, object]) -> None:
+    # the URLs go last, where the shortened input keeps its tail
+    values: dict[str, object] = {"env": "test"} | overrides
+    values |= {k: v for k, v in SHORT_URLS.items() if k not in overrides}
+    with pytest.raises(ValidationError) as exc_info:
+        Settings.model_validate({k: v for k, v in values.items() if v is not None})
+
+    # uvicorn prints the traceback at startup, so it lands in the container logs.
+    # exc.errors() still holds the input by pydantic's design: call errors(include_input=False)
+    printed = "".join(traceback.format_exception(exc_info.value))
+    assert PASSWORD not in printed
+    assert PASSWORD not in repr(exc_info.value)
 
 
 @pytest.mark.usefixtures("fresh_settings_cache")
