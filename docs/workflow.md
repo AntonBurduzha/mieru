@@ -29,7 +29,7 @@ docker compose ps                    # all three "running (healthy)"; ClickHouse
 
 cd apps/backend
 uv sync                              # creates .venv with Python 3.13 and the locked dependencies
-uv run ruff check . && uv run mypy src
+uv run ruff check . && uv run mypy src tests
 uv run pytest                        # unit and integration tests
 ```
 
