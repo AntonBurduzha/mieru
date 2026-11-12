@@ -50,6 +50,20 @@ Expected: every command exits 0; pytest reports no failures and no skips added b
 ## Test it yourself
 Up to five steps for the developer at gate 2, with what to see. Prefer the real app over tests: a `curl`, a page, a log line.
 
+## Where to debug
+Filled in after the build by whoever implemented it; line numbers are as of the last commit. Three to five places where this task's behaviour is decided, the one most likely to break first. Pick from:
+- input boundaries (validation, parsing);
+- branches that choose behaviour (env, flags, error paths);
+- I/O adapters (Postgres, Redis, ClickHouse calls);
+- concurrency (locks, lifespans, retries).
+
+Skip trivial glue. Each trigger must really reach the line. How to run the debugger: `docs/workflow.md` section 12.
+
+1. **<what this place decides>**: `apps/backend/src/mieru/<module>.py:<line>` (`<function>`)
+   - Why here: what it decides, and how a bug here shows up from the outside.
+   - Stop there: a breakpoint on line `<line>`, the Cursor config `<api | ingest | pytest: -k>`, then `<curl, page or test that reaches it>`. Terminal: `uv run --directory apps/backend pytest <test path> -k <name> --pdb`
+   - Look at: the variables to inspect and the values you expect.
+
 ## Notes
 Decisions made while building, and open questions. Filled in during the build.
 

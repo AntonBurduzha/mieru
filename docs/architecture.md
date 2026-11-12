@@ -1,6 +1,6 @@
 # Mieru: system design
 
-> A privacy-first web analytics SaaS, modelled on Plausible. **FastAPI + Redis Streams + ClickHouse + Postgres + React**, running as one Docker Compose stack on a single VPS behind nginx.
+> A privacy-first web analytics SaaS, modelled on Plausible. **FastAPI + Redis Streams + ClickHouse + Postgres + React**, running as one Docker Compose stack on a single VPS behind Caddy.
 > Status: living document. Numbers marked *est.* are replaced by measurements during the build.
 
 **How to read this:** sections 1-4 say what is being built. Sections 5-10 say how it works. Sections 11-13 cover running it and the trade-offs behind each decision. Numbers marked *est.* are estimates, replaced by measurements during the build.
@@ -110,7 +110,7 @@ flowchart LR
     O["Site owner's browser"]
     EXT["Alerts, Stripe, ..."]
 
-	CD["nginx<br/>TLS, routing, retries"]
+	CD["Caddy<br/>TLS, routing, retries"]
 	ING["ingest service"]
 	WEB["web<br/>React app"]
 	API["api service"]
@@ -140,7 +140,7 @@ flowchart LR
 
 | Component            | Responsibility                                                                      |
 | -------------------- | ----------------------------------------------------------------------------------- |
-| **`nginx`**          | TLS (certbot certificates), routing by host and path, retries across the two ingest replicas |
+| **`caddy`**          | TLS (automatic Let's Encrypt certificates), routing by host and path, health checks and retries across the ingest replicas, the web app's static files |
 | **`web`**            | React dashboard (and, after MVP, public shared dashboards). Rendering mode, libraries and structure: [frontend.md](frontend.md) |
 | **`ingest service`** | `POST /api/event` and the script file. Validate, gate, hash, append to the stream   |
 | **`api service`**    | Auth, sites, stats queries; after MVP also goals, billing, alert rules              |
@@ -189,7 +189,7 @@ In order. The cheap rejections come first.
 2. **Site lookup** in an in-process dictionary keyed by domain, refreshed from Postgres every 30 s. An unknown domain costs one lookup and is then remembered as unknown for 60 s, so a flood for a fake domain stays in memory.
 3. **Site status**: `blocked` and `over_quota` sites are dropped here.
 4. **Bot filter**: empty or known-bot user agents, headless browsers, referrers on a spam blocklist.
-5. **Visitor id**: a keyed hash over domain, IP and user agent (section 6). The IP is the one nginx saw on the TCP connection, passed to `ingest` in an `X-Real-IP` header that nginx sets itself. `X-Forwarded-For` and any other forwarding header sent by the client are ignored.
+5. **Visitor id**: a keyed hash over domain, IP and user agent (section 6). The IP is the one Caddy saw on the TCP connection, passed to `ingest` in an `X-Real-IP` header that Caddy sets itself. `X-Forwarded-For` and any other forwarding header sent by the client are ignored.
 6. **Country**: lookup in a local IP-to-country database held in memory (DB-IP Lite, *est.* under 10 MB). Country only; city is a stretch goal because that database is many times larger and is loaded by every ingest container.
 7. **Discard the IP.**
 8. **Two Redis calls, no script.** First, a pipeline increments the site's per-minute counter and sets its expiry (`INCR rl:{site_id}:{minute}`, `EXPIRE … 120 NX`). If the count is over the site's limit, the event is dropped as `rate_limited`. Otherwise `XADD` appends it to the stream. The extra round trip on the internal network costs well under a millisecond. The check and the append are not atomic, so a few extra events can get in right at the limit, which does not matter for a rate limit (trade-off 23).
@@ -279,7 +279,7 @@ stateDiagram-v2
 - Two devices are two visitors.
 - People behind one office network with identical browsers merge into one visitor.
 - Anyone can post fake events for any domain. This is true of all script-based analytics. Rate limits and bot filters bound the damage.
-- The only hop in front of `ingest` is my own nginx, with access logging off for the ingest domain. DNS is at Cloudflare in DNS-only mode, so Cloudflare never sees a request. The hosting provider can see network metadata, as with any host.
+- The only hop in front of `ingest` is my own Caddy, with no access log for the ingest domain. DNS is at Cloudflare in DNS-only mode, so Cloudflare never sees a request. The hosting provider can see network metadata, as with any host.
 
 ---
 
@@ -494,7 +494,7 @@ Everything in Redis except the stream can be lost and rebuilt: sessions restart,
 sequenceDiagram
     autonumber
     participant B as Dashboard
-    participant N as nginx
+    participant N as Caddy
     participant A as api
     participant R as Redis
     participant C as ClickHouse
@@ -561,7 +561,7 @@ The cache key is a hash of site, metric, range and filters. The site's timezone 
 
 `n` name, `d` site domain, `u` full URL, `r` referrer, `p` optional properties. The timestamp is set by the server; client clocks are not trusted.
 
-**Dashboard API** (same origin as the dashboard: nginx routes `mieru.example/api/v1/...` to `api`)
+**Dashboard API** (same origin as the dashboard: Caddy routes `mieru.example/api/v1/...` to `api`)
 
 | Area | Endpoints |
 |---|---|
@@ -575,7 +575,7 @@ The cache key is a hash of site, metric, range and filters. The site's timezone 
 
 **Conventions:** JSON; one error shape `{"error": {"code", "message"}}`; a site the user cannot access returns `404`, not `403`, so ids cannot be probed.
 
-**Auth model.** Login creates a random session token, sets it in an `HttpOnly; Secure; SameSite=Lax` cookie, and stores only its hash in Postgres. Each request looks the hash up (cached in Redis for 60 s). Logout or password change deletes the row, which revokes the session immediately. Passwords are hashed with argon2. Because nginx serves the dashboard and its API from one origin, there is no CORS configuration on the dashboard API at all.
+**Auth model.** Login creates a random session token, sets it in an `HttpOnly; Secure; SameSite=Lax` cookie, and stores only its hash in Postgres. Each request looks the hash up (cached in Redis for 60 s). Logout or password change deletes the row, which revokes the session immediately. Passwords are hashed with argon2. Because Caddy serves the dashboard and its API from one origin, there is no CORS configuration on the dashboard API at all.
 
 ---
 
@@ -616,30 +616,35 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 
 | Container | Image | Networks | Open to the internet | Restarted by an app deploy |
 |---|---|---|---|---|
-| `nginx` | nginx (official) | edge | ports 80, 443 | Only when its config changes (a reload, not a restart) |
-| `certbot` | certbot/certbot | none | no | No. Started by a timer for renewals, then exits |
-| `web` | No container. Static files from the `mieru-web` image, copied to disk by the deploy and served by `nginx` ([frontend.md](frontend.md) section 3) | - | via nginx | Files switched atomically |
+| `caddy` | caddy (official) | edge | ports 80, 443 (TCP) | Only when its config changes (`caddy reload`, not a restart) |
+| `web` | No container. Static files from the `mieru-web` image, copied to disk by the deploy and served by `caddy` ([frontend.md](frontend.md) section 3) | - | via Caddy | Files switched atomically |
 | `ingest-1`, `ingest-2` | mieru-app | edge, internal | no | Yes, one at a time |
 | `api` | mieru-app | edge, internal | no | Yes |
 | `writer`, `worker` | mieru-app | internal | no | Yes |
 | `postgres`, `redis`, `clickhouse` | official images | internal | no | No |
 | `alloy` *(after MVP)* | grafana/alloy | internal | no | No |
 
-**Routing (nginx)**
+**Routing (Caddy)**
 
 | Request | Goes to |
 |---|---|
-| `in.mieru.example/*` | upstream `ingest-1` and `ingest-2`. If the connection to one fails, nginx retries the request on the other |
+| `in.mieru.example/*` | `ingest-1` and `ingest-2`, round robin. A replica that fails its health check leaves the rotation, and a request that can't connect is retried on the other |
 | `mieru.example/api/*` | `api` |
 | `mieru.example/*` | the web app's static files; unknown paths get `index.html` |
+| any other host name | the connection is closed |
 
-**How nginx is set up**
+**How Caddy is set up**
 
-- **TLS.** certbot gets Let's Encrypt certificates using the webroot challenge: nginx serves `/.well-known/acme-challenge/` from a shared volume. A systemd timer runs `certbot renew` twice a day and reloads nginx (`nginx -s reload`) when a certificate changed. Reloading does not drop open connections.
-- **Health and retries.** Open-source nginx has no active health checks; those come with NGINX Plus. Instead it uses passive checks: after a failed request (`max_fails=1 fail_timeout=5s`) it leaves that upstream alone for a few seconds. With `proxy_next_upstream error timeout`, it retries the request on the other replica. A refused connection means the request was never sent, so nginx retries even a `POST`. During a restart, visitors don't see errors.
-- **Client IP.** nginx sets `X-Real-IP $remote_addr` and drops any `X-Forwarded-For` the client sent. `ingest` reads only `X-Real-IP`, and only from the proxy.
-- **Privacy in logs.** The ingest server block has `access_log off`. The dashboard host uses a log format without `$remote_addr` and without the user agent.
-- **Headers.** HSTS, `X-Content-Type-Options`, and the CSP from [frontend.md](frontend.md) on the dashboard. `Access-Control-Allow-Origin: *` on ingest only.
+One `Caddyfile` in `ops/caddy/` describes both sites.
+
+- **TLS.** Caddy gets Let's Encrypt certificates itself, using the HTTP challenge on port 80, and renews them in the background. The certificates live in the `caddy-data` volume. There is no certbot, no renewal timer and no reload. On the Mac, the domain is `localhost`, and Caddy signs certificates with its own local authority instead.
+- **Health and retries.** Active checks: Caddy asks each replica's `/health` every 2 seconds and takes a failing one out of the rotation. Passive checks: a failed request marks the replica down for a few seconds. When a connection fails, Caddy picks another replica and tries again for up to 5 seconds. A failed connection means the request was never sent, so this is safe even for a `POST`. Other failures are retried only for `GET`. Idle connections to the apps are closed after 4 seconds, before uvicorn's own 5-second limit, so Caddy never sends a request on a connection the app is closing.
+- **Container addresses.** The upstreams are Compose service names. Caddy looks the name up in Docker's DNS on every new connection. A stopped container's name doesn't resolve, so the connection fails at once and is retried. A recreated container is found at its new address, with no reload. Adding replicas past fixed names would use `dynamic a` on a shared network alias, which gives up the active checks (section 13, row 24).
+- **Client IP.** Caddy sets `X-Real-IP` to the address of the TCP peer and removes `X-Forwarded-For` and `Forwarded` before proxying, so nothing the client sends gets through. `ingest` reads only `X-Real-IP`, and only from the proxy.
+- **Privacy in logs.** The ingest site has no access log. The dashboard's access log and every other Caddy log line (errors, health checks, TLS) go through a filter that deletes the client address, the port, all request headers and the query string. The log level stays at `INFO`: at `DEBUG`, failed TLS handshakes print the client's address in the message text.
+- **Headers.** HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, and the CSP from [frontend.md](frontend.md) on the dashboard. `Access-Control-Allow-Origin: *` on ingest only. The `Server` and `Via` headers are removed.
+- **HTTP/3 off.** Caddy speaks HTTP/1.1 and HTTP/2 only. That keeps the firewall at TCP 80 and 443, and HTTP/3 adds nothing measurable for one small request per page view.
+- **Health checks from outside.** On the dashboard host, `/health` and `/health/ready` also go to `api`, so an uptime check and the deploy can reach them at `https://mieru.example/health/ready`.
 
 **Network and access**
 
@@ -660,7 +665,7 @@ flowchart LR
     MIG --> ROLL["restart app containers<br/>one at a time,<br/>wait for healthy"]
 ```
 
-- **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, then restarts `ingest-2`. While one replica is down, nginx retries its requests on the other.
+- **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, then restarts `ingest-2`. While one replica is down, Caddy's health checks take it out of the rotation and any request that fails to connect is retried on the other.
 - **Clean shutdown.** On SIGTERM `ingest` finishes in-flight requests and `writer` finishes and acknowledges its current batch.
 - **Failed migration** stops the deploy before any container restarts. Schema changes follow expand, migrate, contract so old and new code can overlap.
 - **Rollback** is a deploy of the previous image; images are tagged with the git commit.
@@ -683,7 +688,7 @@ R2's free tier covers 10 GB. Before launch, one restore drill: new server, boots
 
 **What this gives up compared with a platform like Railway:** a preview environment per pull request, managed TLS and deploys, and any protection against the server itself failing.
 
-**MVP stack:** nginx (which also serves the web app's files), two ingest replicas, api, writer, worker, Postgres, Redis and ClickHouse. That is 9 containers on 8 GB, plus certbot when it renews. Before adding a container, set a memory limit for each one and measure it.
+**MVP stack:** Caddy (which also serves the web app's files and renews its own certificates), two ingest replicas, api, writer, worker, Postgres, Redis and ClickHouse. That is 9 containers on 8 GB. Before adding a container, set a memory limit for each one and measure it.
 
 ---
 
@@ -717,7 +722,7 @@ Stream age is the single best signal: if it grows, the writer or ClickHouse is b
 
 **Load test (k6)** *(after MVP)*
 
-k6 runs on a second server rented by the hour in the same data centre, so the load generator does not take CPU from the system under test. It targets the public domain, so TLS and nginx are part of the measurement. The vCPUs are shared with other customers, so each scenario runs three times and the median is reported.
+k6 runs on a second server rented by the hour in the same data centre, so the load generator does not take CPU from the system under test. It targets the public domain, so TLS and Caddy are part of the measurement. The vCPUs are shared with other customers, so each scenario runs three times and the median is reported.
 
 All k6 traffic comes from one IP, which would make every request the same visitor. A header accepted only with a load-test secret lets k6 supply a visitor seed, so the test produces a realistic number of sessions.
 
@@ -748,7 +753,7 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 8   | Overload behaviour       | Counted drops at a high-water mark                               | Let Redis trim the stream; return 503                                                 | The script cannot usefully retry, and an error on the customer's page helps nobody. Explicit drops are visible in metrics                                                                                                                                                                                                |
 | 9   | Rollups                  | Raw queries first, rollups if measured                           | Hourly rollups from day one                                                           | Avoids building and maintaining tables the scale may never need. The load test decides                                                                                                                                                                                                                                   |
 | 10  | Realtime                 | Polling every 30 s                                               | WebSocket or SSE push                                                                 | "Current visitors" changes slowly; polling is stateless and cacheable                                                                                                                                                                                                                                                    |
-| 11  | Frontend                 | React, on the same origin as the API (nginx routes by path). Rendering mode and libraries: [frontend.md](frontend.md) | Nuxt 4 SSR (the first draft); a frontend on another origin | React is what I know best, so features ship faster. Same origin means no CORS and first-party cookies. Cost: learning a second framework (Vue) is no longer part of the project |
+| 11  | Frontend                 | React, on the same origin as the API (Caddy routes by path). Rendering mode and libraries: [frontend.md](frontend.md) | Nuxt 4 SSR (the first draft); a frontend on another origin | React is what I know best, so features ship faster. Same origin means no CORS and first-party cookies. Cost: learning a second framework (Vue) is no longer part of the project |
 | 12  | Auth                     | Server-side sessions, opaque cookie                              | JWT access + refresh tokens                                                           | Instant revocation and less machinery. Cost: one cached lookup per request                                                                                                                                                                                                                                               |
 | 13  | Task queue               | None in the MVP. A small asyncio scheduler loop in `worker` runs the daily salt rotation. A queue is chosen when email and alert jobs arrive; Taskiq is the first candidate | Taskiq from day one; ARQ; Celery | One scheduled job doesn't need a broker. Taskiq is async-native and has a scheduler. ARQ is simpler but in maintenance mode. Celery is the industry default but sync-first and heavier |
 | 14  | Geo lookup               | Local country database in memory                                 | City-level database; Cloudflare's country header                                      | No third party sees the IP, and little RAM. City needs many times the memory                                                                                                                                                                                                                                             |
@@ -756,11 +761,17 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 16  | Tenancy in ClickHouse    | Shared tables, `site_id` first in the sort key                   | Table or database per customer                                                        | One schema to migrate; the sort key already isolates each site's data on disk                                                                                                                                                                                                                                            |
 | 17  | Hosting                  | One VPS with Docker Compose                                      | Railway (the first draft of this design); Fly.io; Render                              | On Railway this stack came to about $22/month with ClickHouse's RAM as 40% of it, volumes were capped at 5 GB, and the benchmark would have included Railway's own proxy. The VPS is about half the price with over four times the memory. Cost: I own TLS, deploys, backups and patching, and lose preview environments |
 | 18  | Payments                 | Stripe Checkout + webhooks                                       | Own payment form                                                                      | No card data in Mieru; webhook handling is the transferable skill                                                                                                                                                                                                                                                        |
-| 19  | Reverse proxy            | nginx + certbot | Caddy (the first draft); Traefik | The most common proxy in production, and the one I already know. Every setting is explicit. Cost: certificates need certbot and a renewal timer, and open-source nginx has only passive health checks, so a restart is covered by retrying on the other replica |
+| 19  | Reverse proxy            | Caddy | nginx + certbot (built first, in T02); Traefik | Automatic certificates (no certbot, no renewal timer), active and passive health checks, retries that look the upstream up again, and static files, all in one open-source binary with no access to the Docker socket. nginx was built first and dropped: open-source nginx has only passive health checks, and its `resolve` lost retries (row 24). Traefik needs the Docker socket for discovery and can't serve static files. Cost: less common than nginx in production, and log privacy depends on a filter in the config, so a T02 criterion checks the logs |
 | 20  | Deploy tooling           | Compose + a short deploy script                                  | Kamal; Coolify or Dokploy; Docker Swarm; Kubernetes                                   | Every step is explicit and auditable. Kamal and Swarm do rolling deploys out of the box and are the next step if the script grows                                                                                                                                                                                     |
 | 21  | Cloudflare               | DNS only                                                         | Proxied mode (CDN, DDoS protection, hides the server's address)                       | In proxied mode a third party sees every visitor's IP, which weakens the privacy claim, and its protections can interfere with a load test. Cost: the server's address is public and the script has no CDN                                                                                                               |
 | 22  | Backups                  | Provider disk backups + database dumps to R2                     | Provider backups only                                                                 | Disk backups alone sit with the same provider and capture databases mid-write                                                                                                                                                                                                                                            |
 | 23  | Rate limit and append    | Two Redis calls: pipelined `INCR` + `EXPIRE`, then `XADD` | One Lua script doing both atomically (the first draft); a rate-limit library | No hand-written Lua to test, version and load. The two calls are not atomic, which only lets a few extra events in at the limit. The extra round trip costs well under 1 ms |
+| 24  | Upstream addresses       | Compose service names, looked up by Caddy on every new connection | nginx with `resolve` (T02's first build); fixed container IPs; `nginx -s reload` after every restart | With nginx's `resolve`, a stopped replica that left Docker's DNS during a request cancelled that request's retry: a `504` in about 1 of 5 test runs. Fixed IPs worked but need two files edited for every new replica. Cost: none at two replicas. Past fixed names, `dynamic a` on a network alias adds replicas with no config change but runs no active health checks |
+| 25  | Proxy logs               | A filter that deletes the client address, port, request headers and query string from every Caddy log; level `INFO`; no access log for ingest | nginx with `error_log emerg` (T02's first build) | Error lines include the request by default, and at `DEBUG` failed TLS handshakes print the client address in the message. Cost: a log line can't be tied to a client, so abuse is investigated from the apps' counters instead |
+| 26  | App settings in Compose  | An explicit `environment:` list in `compose.prod.yaml`           | `env_file: .env`                                                                      | A stray line in the server's `.env` (for example `GIT_SHA=dev`) can't override the image. Cost: a new setting means editing the Compose file |
+| 27  | Health URLs on the dashboard host | `/health` and `/health/ready` on the dashboard host go to `api` | Move the routes under `/api/v1/` | An uptime check and the deploy can use `https://mieru.example/health/ready`. Moving the routes would change Python and every health check |
+| 28  | Domain                   | A variable (`MIERU_DOMAIN`); ingest is `in.` in front of it | Hard-coded in the proxy config | The same files run on the Mac with `localhost` and on the server with the real name, which T03 chooses |
+| 29  | HTTP/3                   | Off: HTTP/1.1 and HTTP/2 only | On, with UDP 443 published and allowed by the firewall | One small request per page view gains nothing measurable from QUIC. Cost: none known; it can be turned on later without other changes |
 
 ---
 

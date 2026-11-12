@@ -33,6 +33,7 @@ Read the changed files in full where the diff alone isn't enough.
    - no test was deleted, skipped or weakened;
    - none of the red flags in conventions section 6.8.
 8. **Scope:** nothing outside the spec's allowed files changed.
+9. **Debug map:** the spec's "Where to debug" section exists. Every `file:line` points at the code the entry names, every trigger really reaches that line, and the entries cover the riskiest places in the diff. Missing or stale is `should-fix`.
 
 Ignore formatting and anything ruff, mypy or ESLint already enforce.
 

@@ -17,7 +17,7 @@ mieru/
 ├── CLAUDE.local.md           # the developer's private notes for Claude (gitignored)
 ├── README.md
 ├── compose.yaml              # local dev: postgres, redis, clickhouse
-├── compose.prod.yaml         # (later) the server: nginx, apps, databases
+├── compose.prod.yaml         # the server: caddy, apps, databases
 ├── .env.example              # every backend setting, with a comment
 ├── .github/
 │   ├── workflows/ci.yml      # lint, types, tests; image push on main
@@ -39,7 +39,7 @@ mieru/
 │   └── learn/                # human-mode tutorials (gitignored)
 ├── ops/
 │   ├── clickhouse/           # low-memory.xml, users.xml
-│   ├── nginx/                # (later) server config
+│   ├── caddy/                # Caddyfile: both sites, TLS, routing, headers, log filters
 │   ├── bootstrap.sh          # (later) fresh server, ready for deploys
 │   ├── deploy.sh             # (later) pull, migrate, rolling restart
 │   ├── backup/               # (later) pg_dump and ClickHouse backup scripts, restore-check.sh
@@ -402,7 +402,7 @@ Privacy is the product's main promise, so it gets tests like any other feature.
 - **Limits:** body up to 8 KB, name up to 120 characters, URL up to 2,000, up to 30 props, prop keys up to 64 and values up to 2,000 characters. Anything else gets `400`.
 - **Cheap checks first:** unknown or blocked sites, bots and spam are dropped in memory, before any Redis call.
 - **Always `202`** for a well-formed request, with `X-Mieru-Dropped` when dropped, so nobody can probe which domains are registered.
-- **Client IP** comes only from the `X-Real-IP` header that nginx sets. Client-sent `X-Forwarded-For` is ignored.
+- **Client IP** comes only from the `X-Real-IP` header that Caddy sets. Client-sent `X-Forwarded-For` is ignored.
 - **The IP is used for one request** (visitor id, country) and never stored or logged.
 - **Load-test headers** *(after MVP)* work only when `LOADTEST_SECRET` is set, compared with `hmac.compare_digest`.
 - **Accepted risk:** anyone can send real-looking events for a registered domain, as with every script-based analytics product. Rate limits and bot filters bound the damage.
@@ -442,11 +442,11 @@ A site or object the user can't access returns `404`, never `403`, so ids can't 
 **Server and containers**
 
 - SSH keys only, no root login. The provider firewall allows only 22, 80 and 443, because Docker bypasses `ufw` for published ports.
-- Only nginx publishes ports. Databases sit on the internal Compose network.
+- Only Caddy publishes ports. Databases sit on the internal Compose network.
 - Automatic security updates.
 - Containers run as a non-root user, from slim images, with a memory limit each, and no secrets baked into the image.
 
-**Headers** (set by nginx)
+**Headers** (set by Caddy, which also removes `Server` and `Via`)
 
 | Header | Value |
 |---|---|
@@ -497,7 +497,7 @@ A task in an area merges only when its rows hold.
 | Area | Must be true |
 |---|---|
 | Config and startup | Secrets are `SecretStr` or `Secret[...]`; no debug or API docs exposure in `ENV=prod`; 500s hide internals in prod |
-| Server and deploy | Firewall 22/80/443; SSH keys only; only nginx publishes ports; HTTP redirects to HTTPS |
+| Server and deploy | Firewall 22/80/443 (TCP); SSH keys only; only Caddy publishes ports; HTTP redirects to HTTPS; no client IP in any proxy log |
 | Auth | argon2id; hashed session tokens; cookie flags; login limiter; generic errors; the Origin check |
 | Ingest | Size limits; IP discarded; drop reasons counted; `X-Real-IP` only |
 | Stats | Query parameters (`{name:Type}`) and whitelists for properties; the read-only ClickHouse user; query time and memory limits; `stats_unavailable` on timeout |

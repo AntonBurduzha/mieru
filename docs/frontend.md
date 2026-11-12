@@ -6,7 +6,7 @@
 
 ## 1. Summary
 
-A **React single-page app built with Vite**, served as static files by nginx on the same origin as the API. Routing and URL state come from **TanStack Router**, server data from **TanStack Query** over a client typed from the API's OpenAPI schema, UI from **shadcn/ui** (Radix primitives, Tailwind), and charts from **Recharts** through shadcn's chart component.
+A **React single-page app built with Vite**, served as static files by Caddy on the same origin as the API. Routing and URL state come from **TanStack Router**, server data from **TanStack Query** over a client typed from the API's OpenAPI schema, UI from **shadcn/ui** (Radix primitives, Tailwind), and charts from **Recharts** through shadcn's chart component.
 
 | Decision | Choice | Main alternative | Why |
 |---|---|---|---|
@@ -45,28 +45,28 @@ These are starting budgets. The task that sets up the app measures the real numb
 
 ## 3. Rendering and deploy
 
-**Build.** `vite build` writes `apps/web/dist/`: `index.html` plus content-hashed files in `dist/assets/`. The build also writes a `.gz` copy of every text file at maximum compression, which nginx serves directly (`gzip_static on`). Brotli is left out, because the official nginx image doesn't include it.
+**Build.** `vite build` writes `apps/web/dist/`: `index.html` plus content-hashed files in `dist/assets/`. The build also writes a `.gz` copy of every text file at maximum compression, which Caddy serves directly (`file_server { precompressed gzip }`). Caddy could serve Brotli `.br` copies the same way; they can be added to the build later.
 
 **One build for every environment.** No build-time environment variables. Anything that differs between local and production (the ingest URL shown in the snippet, for example) comes from the API at run time.
 
-**Serving** (nginx, `mieru.example`)
+**Serving** (Caddy, `mieru.example`)
 
 | Path | Served | Cache |
 |---|---|---|
 | `/api/*` | proxied to `api` | per response |
 | `/assets/*` | static, hashed names | `public, max-age=31536000, immutable` |
 | `/theme-init.js`, `/favicon.svg` | static | `public, max-age=3600` |
-| anything else | `try_files $uri /index.html` (client-side routes) | `no-cache` on `index.html`, so every load picks up a new deploy |
+| anything else | `try_files {path} /index.html` (client-side routes) | `no-cache` on `index.html`, so every load picks up a new deploy |
 
 **Deploy.** CI builds a small `mieru-web` image that only carries `dist/`. `deploy.sh` copies the files out of the image onto the server's disk; no container keeps running:
 
 - The hashed files go into one shared `/opt/mieru/web/assets/` folder. Existing files are never overwritten, and files older than 30 days are deleted.
 - `index.html` goes into `/opt/mieru/web/releases/<sha>/`, and a `current` symlink is switched to it in one atomic step.
-- nginx serves `/opt/mieru/web/current` and the shared `assets/` folder from a read-only mount. No reload is needed.
+- Caddy serves `/opt/mieru/web/current` and the shared `assets/` folder from a read-only mount. No reload is needed.
 
 Old assets stay around on purpose: a tab opened before a deploy still loads its old lazy chunks. If a chunk is missing anyway, the app listens for Vite's `vite:preloadError` event and reloads the page once.
 
-**Headers** on the dashboard host (set by nginx; the rest of the list is in [conventions.md](conventions.md) section 7.5):
+**Headers** on the dashboard host (set by Caddy; the rest of the list is in [conventions.md](conventions.md) section 7.5):
 
 ```text
 Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
@@ -115,7 +115,7 @@ sequenceDiagram
     autonumber
     actor U as User
     participant B as Browser (React app)
-    participant A as api (same origin, via nginx)
+    participant A as api (same origin, via Caddy)
     U->>B: open /sites/12?period=7d
     B->>A: GET /api/v1/me (the browser adds the cookie)
     alt valid session
