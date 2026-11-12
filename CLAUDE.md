@@ -29,6 +29,7 @@ Not built yet: Postgres models, auth, the ingest pipeline, writer, worker, web a
 
 ## Working on a task
 Each task has a spec in `docs/tasks/T<NN>-<slug>.md`. Edit only the files the spec allows, write the tests first, run the proof-of-done commands and show their output. Never push; the developer pushes and opens the PR. Details: `docs/workflow.md`.
+The developer is the only author: commits and PR descriptions carry no `Co-Authored-By` trailer and no "Generated with Claude Code" line.
 
 ## Commands
 From `apps/backend`:
