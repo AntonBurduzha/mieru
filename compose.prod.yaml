@@ -1,0 +1,118 @@
+name: mieru-prod
+
+# Shared by ingest-1, ingest-2 and api. Every setting is listed here on purpose:
+# no env_file, so nothing on the server can override the image's GIT_SHA.
+x-app: &app
+  image: ghcr.io/antonburduzha/mieru-app:${MIERU_TAG:?set MIERU_TAG to an image tag}
+  environment:
+    ENV: prod
+    DATABASE_URL: postgresql+asyncpg://mieru:${POSTGRES_PASSWORD:?}@postgres:5432/mieru
+    REDIS_URL: redis://redis:6379/0
+    CLICKHOUSE_URL: http://mieru:${CLICKHOUSE_PASSWORD:?}@clickhouse:8123/mieru
+    APP_BASE_URL: https://${MIERU_DOMAIN:?}
+    INGEST_BASE_URL: https://in.${MIERU_DOMAIN:?}
+  networks: [edge, internal]
+  restart: unless-stopped
+
+x-app-healthcheck: &app-healthcheck
+  interval: 5s
+  timeout: 2s
+  retries: 3
+  start_period: 10s
+
+services:
+  ingest-1: &ingest
+    <<: *app
+    # --no-proxy-headers: the client IP comes only from X-Real-IP, which nginx sets
+    command: ["uvicorn", "--factory", "mieru.ingest.app:create_app",
+              "--host", "0.0.0.0", "--port", "8001", "--no-proxy-headers"]
+    healthcheck:
+      <<: *app-healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=1)"]
+    depends_on:
+      redis: { condition: service_healthy }
+    mem_limit: 256m
+
+  ingest-2:
+    <<: *ingest
+
+  api:
+    <<: *app
+    command: ["uvicorn", "--factory", "mieru.api.app:create_app",
+              "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
+    healthcheck:
+      <<: *app-healthcheck
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=1)"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    mem_limit: 384m
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: mieru
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: mieru
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mieru -d mieru"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    mem_limit: 512m
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # noeviction: when full, refuse writes instead of silently deleting keys such as the event stream
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec",
+              "--maxmemory", "400mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    mem_limit: 512m
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.34.13
+    environment:
+      CLICKHOUSE_DB: mieru
+      CLICKHOUSE_USER: mieru
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./ops/clickhouse/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user mieru --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks: [internal]
+    mem_limit: 2560m
+    restart: unless-stopped
+
+networks:
+  edge: {}
+  internal:
+    internal: true
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+  clickhouse-data: {}
