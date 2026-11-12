@@ -1,9 +1,11 @@
 # Mieru: system design
 
-> A privacy-first web analytics SaaS, modelled on Plausible. **FastAPI + Redis Streams + ClickHouse + Postgres + Nuxt 4**, running as one Docker Compose stack on a single VPS.
+> A privacy-first web analytics SaaS, modelled on Plausible. **FastAPI + Redis Streams + ClickHouse + Postgres + React**, running as one Docker Compose stack on a single VPS behind nginx.
 > Status: living document. Numbers marked *est.* are replaced by measurements during the build.
 
-**How to read this:** sections 1-4 say what is being built. Sections 5-10 say how it works. Sections 11-13 cover running it and the decisions I want challenged. Numbers marked *est.* are estimates, replaced by measurements during the build.
+**How to read this:** sections 1-4 say what is being built. Sections 5-10 say how it works. Sections 11-13 cover running it and the trade-offs behind each decision. Numbers marked *est.* are estimates, replaced by measurements during the build.
+
+**Scope:** this document describes the full product. Parts marked *(after MVP)* are designed here but built after the MVP. The MVP is the core loop: tracking script, ingest, writer, ClickHouse, dashboard, accounts and sites, deployed. Who it is for and the acceptance criteria are in [product.md](product.md). The frontend is designed in [frontend.md](frontend.md). The build order is in [roadmap.md](roadmap.md).
 
 ---
 
@@ -33,9 +35,9 @@ A site owner adds one `<script>` tag to their site. The script sends each page v
 flowchart LR
     V["Visitor on a customer's site"] -->|"page views, events"| P(("Mieru"))
     O["Site owner"] -->|"dashboard"| P
-    P -->|"subscriptions"| ST["Stripe (test mode)"]
-    P -->|"reports, alerts"| N["Email, channels"]
-    P -->|"metrics, traces, logs"| G["Grafana"]
+    P -->|"verification, reports, alerts"| N["Email"]
+    P -.->|"subscriptions (after MVP)"| ST["Stripe (test mode)"]
+    P -.->|"metrics, traces, logs (after MVP)"| G["Grafana"]
 ```
 
 ---
@@ -68,10 +70,10 @@ flowchart LR
 | D2  | Time series chart by hour or day                                                               |
 | D3  | Breakdowns: sources, UTM tags, pages, entry and exit pages, countries, devices, browsers, OS   |
 | D4  | Current visitors (last 5 minutes), refreshed automatically                                     |
-| D5  | Goals: mark an event or a page as a goal, see conversions and conversion rate                  |
+| D5  | *(after MVP)* Goals: mark an event or a page as a goal, see conversions and conversion rate    |
 | D6  | Click any breakdown row to filter the whole dashboard                                          |
-| D7  | Public shared link to a read-only dashboard                                                    |
-| D8  | Comparison with the previous period, CSV export, Stats API with API keys                       |
+| D7  | *(after MVP)* Public shared link to a read-only dashboard                                      |
+| D8  | *(after MVP)* Comparison with the previous period, CSV export, Stats API with API keys         |
 
 **Accounts, plans, alerts**
 
@@ -79,10 +81,10 @@ flowchart LR
 | --- | ----------------------------------------------------------------------------------------- |
 | A1  | Sign up, verify email, log in, log out                                                    |
 | A2  | An organization owns sites; add a site and get a snippet plus an "is it installed?" check |
-| A3  | Plans with a monthly event quota and a site limit; usage shown in settings                |
-| A4  | Upgrade and cancel through Stripe Checkout and the customer portal (test mode)            |
-| A5  | Spike alert when current visitors pass a threshold; weekly report                         |
-| A6  | Alerts by email, to verified addresses                                                    |
+| A3  | *(after MVP)* Plans with a monthly event quota and a site limit; usage shown in settings  |
+| A4  | *(after MVP)* Upgrade and cancel through Stripe Checkout and the customer portal (test mode) |
+| A5  | *(after MVP)* Spike alert when current visitors pass a threshold; weekly report           |
+| A6  | *(after MVP)* Alerts by email, to verified addresses                                      |
 
 ---
 
@@ -108,12 +110,12 @@ flowchart LR
     O["Site owner's browser"]
     EXT["Alerts, Stripe, ..."]
 
-	CD["server<br/>TLS, routing, retries"]
+	CD["nginx<br/>TLS, routing, retries"]
 	ING["ingest service"]
-	WEB["web ui"]
+	WEB["web<br/>React app"]
 	API["api service"]
 	WR["writer service<br/>stream consumer"]
-	WK["worker<br/>taskrunner + scheduler"]
+	WK["worker<br/>scheduled jobs"]
 	RD[("Redis<br/>stream, sessions,<br/>cache, counters")]
 	PG[("Postgres<br/>accounts, sites, billing")]
 	CH[("ClickHouse<br/>events, sessions")]
@@ -138,13 +140,13 @@ flowchart LR
 
 | Component            | Responsibility                                                                      |
 | -------------------- | ----------------------------------------------------------------------------------- |
-| **`web-server`**     | TLS certificates, routing by host and path, health checks                           |
-| **`web ui`**         | Dashboard, public shared dashboards                                                 |
+| **`nginx`**          | TLS (certbot certificates), routing by host and path, retries across the two ingest replicas |
+| **`web`**            | React dashboard (and, after MVP, public shared dashboards). Rendering mode, libraries and structure: [frontend.md](frontend.md) |
 | **`ingest service`** | `POST /api/event` and the script file. Validate, gate, hash, append to the stream   |
-| **`api service`**    | Auth, sites, goals, stats queries, billing, alert rules                             |
+| **`api service`**    | Auth, sites, stats queries; after MVP also goals, billing, alert rules              |
 | **`writer service`** | Read stream batches, assign sessions, insert into ClickHouse, acknowledge           |
-| **`worker`**         | Scheduled and slow jobs: usage metering, alert checks, reports, emails              |
-| **`Redis`**          | Event buffer, session state, rate-limit and usage counters, query cache, task queue |
+| **`worker`**         | Scheduled jobs. MVP: daily salt rotation. After MVP: usage metering, alert checks, reports, emails |
+| **`Redis`**          | Event buffer, session state, rate-limit counters, query cache; after MVP usage counters and the task queue |
 | **`Postgres`**       | Source of truth for everything that is not an event                                 |
 | **`ClickHouse`**     | Events and sessions; all dashboard aggregation                                      |
 
@@ -165,7 +167,8 @@ sequenceDiagram
     I->>I: validate, look up site in memory, bot filter
     I->>I: visitor_id = hash(salt, domain, IP, user agent), country from IP
     Note over I: The IP is discarded here and never leaves this process
-    I->>R: one script call - rate limit check, then append to stream
+    I->>R: pipeline: INCR + EXPIRE the site's rate-limit counter
+    I->>R: XADD the event to the stream (only if under the limit)
     I-->>S: 202 Accepted
     loop every 1 s or 5,000 events
         W->>R: read next batch (consumer group)
@@ -186,10 +189,10 @@ In order. The cheap rejections come first.
 2. **Site lookup** in an in-process dictionary keyed by domain, refreshed from Postgres every 30 s. An unknown domain costs one lookup and is then remembered as unknown for 60 s, so a flood for a fake domain stays in memory.
 3. **Site status**: `blocked` and `over_quota` sites are dropped here.
 4. **Bot filter**: empty or known-bot user agents, headless browsers, referrers on a spam blocklist.
-5. **Visitor id**: a keyed hash over domain, IP and user agent (section 6). The IP is the one Caddy saw on the TCP connection; forwarding headers sent by the client are ignored.
+5. **Visitor id**: a keyed hash over domain, IP and user agent (section 6). The IP is the one nginx saw on the TCP connection, passed to `ingest` in an `X-Real-IP` header that nginx sets itself. `X-Forwarded-For` and any other forwarding header sent by the client are ignored.
 6. **Country**: lookup in a local IP-to-country database held in memory (DB-IP Lite, *est.* under 10 MB). Country only; city is a stretch goal because that database is many times larger and is loaded by every ingest container.
 7. **Discard the IP.**
-8. **One Redis call**, a small Lua script: increment the site's rate-limit counter, refuse if over the limit, otherwise append the event to the stream. Doing both in one script keeps it to one network round trip.
+8. **Two Redis calls, no script.** First, a pipeline increments the site's per-minute counter and sets its expiry (`INCR rl:{site_id}:{minute}`, `EXPIRE … 120 NX`). If the count is over the site's limit, the event is dropped as `rate_limited`. Otherwise `XADD` appends it to the stream. The extra round trip on the internal network costs well under a millisecond. The check and the append are not atomic, so a few extra events can get in right at the limit, which does not matter for a rate limit (trade-off 23).
 9. **Answer `202`.** If the event was dropped at any step, the answer is still `202`, with an `X-Mieru-Dropped: <reason>` header, and a counter for that reason goes up.
 
 Nothing in this list waits on Postgres or ClickHouse. If both are down, ingest keeps accepting.
@@ -276,7 +279,7 @@ stateDiagram-v2
 - Two devices are two visitors.
 - People behind one office network with identical browsers merge into one visitor.
 - Anyone can post fake events for any domain. This is true of all script-based analytics. Rate limits and bot filters bound the damage.
-- The only hop in front of `ingest` is my own Caddy, with access logging off for the ingest domain. DNS is at Cloudflare in DNS-only mode, so Cloudflare never sees a request. The hosting provider can see network metadata, as with any host.
+- The only hop in front of `ingest` is my own nginx, with access logging off for the ingest domain. DNS is at Cloudflare in DNS-only mode, so Cloudflare never sees a request. The hosting provider can see network metadata, as with any host.
 
 ---
 
@@ -373,6 +376,8 @@ erDiagram
         timestamptz processed_at
     }
 ```
+
+**MVP tables:** `users`, `organizations`, `memberships`, `auth_sessions`, `sites`, `salts`. The others are created with their features after the MVP.
 
 Decisions worth noting:
 
@@ -474,10 +479,10 @@ FROM (
 | `events` | Stream + one consumer group | Buffer between `ingest` and `writer` | Entry deleted after acknowledgement |
 | `sess:{site_id}:{visitor_id}` | Hash | Session id, start, first-touch attributes | 30 min, reset on each event |
 | `rl:{site_id}:{minute}` | Counter | Per-site rate limit | 2 min |
-| `usage:{org_id}:{yyyymm}` | Counter | Events accepted this month | 60 days |
+| `usage:{org_id}:{yyyymm}` | Counter | *(after MVP)* Events accepted this month | 60 days |
 | `cache:stats:{hash}` | String | Cached query result | 30 s or 24 h |
-| `alert:cooldown:{rule_id}` | Flag | Stops a rule firing repeatedly | 1 h |
-| Taskiq keys | Lists | Background job queue | Until processed |
+| `alert:cooldown:{rule_id}` | Flag | *(after MVP)* Stops a rule firing repeatedly | 1 h |
+| Task queue keys | Lists | *(after MVP)* Background job queue | Until processed |
 
 Everything in Redis except the stream can be lost and rebuilt: sessions restart, counters are re-derived from ClickHouse, the cache refills.
 
@@ -489,7 +494,7 @@ Everything in Redis except the stream can be lost and rebuilt: sessions restart,
 sequenceDiagram
     autonumber
     participant B as Dashboard
-    participant N as Caddy
+    participant N as nginx
     participant A as api
     participant R as Redis
     participant C as ClickHouse
@@ -556,21 +561,21 @@ The cache key is a hash of site, metric, range and filters. The site's timezone 
 
 `n` name, `d` site domain, `u` full URL, `r` referrer, `p` optional properties. The timestamp is set by the server; client clocks are not trusted.
 
-**Dashboard API** (same origin as the dashboard: Caddy routes `mieru.example/api/v1/...` to `api`)
+**Dashboard API** (same origin as the dashboard: nginx routes `mieru.example/api/v1/...` to `api`)
 
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/register`, `/auth/login`, `/auth/logout`, `/auth/verify-email`; `GET /me` |
 | Sites | `GET/POST /sites`, `GET/PATCH/DELETE /sites/{id}`, `GET /sites/{id}/verify` (has any event arrived?) |
 | Stats | `GET /sites/{id}/stats/aggregate`, `/timeseries`, `/breakdown`, `/realtime`. Common parameters: `period` or `from`/`to`, `metrics`, `property`, `filters`, `limit` |
-| Goals | `GET/POST /sites/{id}/goals`, `DELETE /goals/{id}` |
-| Sharing | `POST /sites/{id}/shared-links`; `GET /share/{slug}/stats/...` (no login, read-only) |
-| Billing | `GET /billing/usage`, `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/webhook` |
-| Alerts | `GET/POST /sites/{id}/alerts`, `GET/POST /channels`, `POST /channels/{id}/verify` |
+| Goals *(after MVP)* | `GET/POST /sites/{id}/goals`, `DELETE /goals/{id}` |
+| Sharing *(after MVP)* | `POST /sites/{id}/shared-links`; `GET /share/{slug}/stats/...` (no login, read-only) |
+| Billing *(after MVP)* | `GET /billing/usage`, `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/webhook` |
+| Alerts *(after MVP)* | `GET/POST /sites/{id}/alerts`, `GET/POST /channels`, `POST /channels/{id}/verify` |
 
 **Conventions:** JSON; one error shape `{"error": {"code", "message"}}`; a site the user cannot access returns `404`, not `403`, so ids cannot be probed.
 
-**Auth model.** Login creates a random session token, sets it in an `HttpOnly; Secure; SameSite=Lax` cookie, and stores only its hash in Postgres. Each request looks the hash up (cached in Redis for 60 s). Logout or password change deletes the row, which revokes the session immediately. Passwords are hashed with argon2. Because Caddy serves the dashboard and its API from one origin, there is no CORS configuration on the dashboard API at all.
+**Auth model.** Login creates a random session token, sets it in an `HttpOnly; Secure; SameSite=Lax` cookie, and stores only its hash in Postgres. Each request looks the hash up (cached in Redis for 60 s). Logout or password change deletes the row, which revokes the session immediately. Passwords are hashed with argon2. Because nginx serves the dashboard and its API from one origin, there is no CORS configuration on the dashboard API at all.
 
 ---
 
@@ -611,23 +616,30 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 
 | Container | Image | Networks | Open to the internet | Restarted by an app deploy |
 |---|---|---|---|---|
-| `caddy` | caddy | edge | ports 80, 443 | Only when its config changes |
-| `web` | mieru-web | edge | no | Yes |
+| `nginx` | nginx (official) | edge | ports 80, 443 | Only when its config changes (a reload, not a restart) |
+| `certbot` | certbot/certbot | none | no | No. Started by a timer for renewals, then exits |
+| `web` | No container. Static files from the `mieru-web` image, copied to disk by the deploy and served by `nginx` ([frontend.md](frontend.md) section 3) | - | via nginx | Files switched atomically |
 | `ingest-1`, `ingest-2` | mieru-app | edge, internal | no | Yes, one at a time |
 | `api` | mieru-app | edge, internal | no | Yes |
 | `writer`, `worker` | mieru-app | internal | no | Yes |
 | `postgres`, `redis`, `clickhouse` | official images | internal | no | No |
-| `alloy` | grafana/alloy | internal | no | No |
+| `alloy` *(after MVP)* | grafana/alloy | internal | no | No |
 
-**Routing (Caddy)**
+**Routing (nginx)**
 
 | Request | Goes to |
 |---|---|
-| `in.mieru.example/*` | `ingest-1` and `ingest-2`, health-checked. A request that fails on one is retried on the other for up to 5 s |
+| `in.mieru.example/*` | upstream `ingest-1` and `ingest-2`. If the connection to one fails, nginx retries the request on the other |
 | `mieru.example/api/*` | `api` |
-| `mieru.example/*` | `web` |
+| `mieru.example/*` | the web app's static files; unknown paths get `index.html` |
 
-Caddy obtains and renews Let's Encrypt certificates on its own.
+**How nginx is set up**
+
+- **TLS.** certbot gets Let's Encrypt certificates using the webroot challenge: nginx serves `/.well-known/acme-challenge/` from a shared volume. A systemd timer runs `certbot renew` twice a day and reloads nginx (`nginx -s reload`) when a certificate changed. Reloading does not drop open connections.
+- **Health and retries.** Open-source nginx has no active health checks; those come with NGINX Plus. Instead it uses passive checks: after a failed request (`max_fails=1 fail_timeout=5s`) it leaves that upstream alone for a few seconds. With `proxy_next_upstream error timeout`, it retries the request on the other replica. A refused connection means the request was never sent, so nginx retries even a `POST`. During a restart, visitors don't see errors.
+- **Client IP.** nginx sets `X-Real-IP $remote_addr` and drops any `X-Forwarded-For` the client sent. `ingest` reads only `X-Real-IP`, and only from the proxy.
+- **Privacy in logs.** The ingest server block has `access_log off`. The dashboard host uses a log format without `$remote_addr` and without the user agent.
+- **Headers.** HSTS, `X-Content-Type-Options`, and the CSP from [frontend.md](frontend.md) on the dashboard. `Access-Control-Allow-Origin: *` on ingest only.
 
 **Network and access**
 
@@ -648,7 +660,7 @@ flowchart LR
     MIG --> ROLL["restart app containers<br/>one at a time,<br/>wait for healthy"]
 ```
 
-- **No lost events during a deploy.** The script restarts `ingest-1`, waits for its health check, then restarts `ingest-2`. Caddy keeps sending traffic to whichever is healthy.
+- **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, then restarts `ingest-2`. While one replica is down, nginx retries its requests on the other.
 - **Clean shutdown.** On SIGTERM `ingest` finishes in-flight requests and `writer` finishes and acknowledges its current batch.
 - **Failed migration** stops the deploy before any container restarts. Schema changes follow expand, migrate, contract so old and new code can overlap.
 - **Rollback** is a deploy of the previous image; images are tagged with the git commit.
@@ -667,15 +679,25 @@ R2's free tier covers 10 GB. Before launch, one restore drill: new server, boots
 
 **Keeping the server healthy:** automatic security updates, a size cap on container logs, a memory limit per container, containers set to start on boot, and a disk alert at 70%.
 
-**Local development:** the same Compose file with a dev override. Postgres, Redis and ClickHouse run in Docker; the Python services and Nuxt run natively with reload.
+**Local development:** the same Compose file with a dev override. Postgres, Redis and ClickHouse run in Docker; the Python services and the web app run natively with reload.
 
 **What this gives up compared with a platform like Railway:** a preview environment per pull request, managed TLS and deploys, and any protection against the server itself failing.
+
+**MVP stack:** nginx (which also serves the web app's files), two ingest replicas, api, writer, worker, Postgres, Redis and ClickHouse. That is 9 containers on 8 GB, plus certbot when it renews. Before adding a container, set a memory limit for each one and measure it.
 
 ---
 
 ## 12. Observability and load test
 
-Mieru is itself a monitoring product, so its own pipeline has to be visible. Each service sends metrics, traces and structured logs over OpenTelemetry to a Grafana Alloy container, which forwards them to Grafana Cloud's free tier together with container logs and host metrics.
+Mieru is itself a monitoring product, so its own pipeline has to be visible.
+
+**MVP:**
+- Structured JSON logs to Docker, with a size cap per container.
+- `/health/ready` on every HTTP service, and a pipeline health endpoint with the stream length and the age of its oldest entry.
+- An external uptime check on both domains.
+- A disk alert at 70%.
+
+**After MVP:** each service sends metrics, traces and logs over OpenTelemetry to a Grafana Alloy container. Alloy forwards them, together with container logs and host metrics, to Grafana Cloud's free tier. The table below is the target for that stage. The stream age row is already covered in the MVP by the health endpoint.
 
 **The numbers that say whether the pipeline is healthy**
 
@@ -693,9 +715,9 @@ Mieru is itself a monitoring product, so its own pipeline has to be visible. Eac
 
 Stream age is the single best signal: if it grows, the writer or ClickHouse is behind, whatever the cause.
 
-**Load test (k6)**
+**Load test (k6)** *(after MVP)*
 
-k6 runs on a second server rented by the hour in the same data centre, so the load generator does not take CPU from the system under test. It targets the public domain, so TLS and Caddy are part of the measurement. The vCPUs are shared with other customers, so each scenario runs three times and the median is reported.
+k6 runs on a second server rented by the hour in the same data centre, so the load generator does not take CPU from the system under test. It targets the public domain, so TLS and nginx are part of the measurement. The vCPUs are shared with other customers, so each scenario runs three times and the median is reported.
 
 All k6 traffic comes from one IP, which would make every request the same visitor. A header accepted only with a load-test secret lets k6 supply a visitor seed, so the test produces a realistic number of sessions.
 
@@ -726,18 +748,19 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 8   | Overload behaviour       | Counted drops at a high-water mark                               | Let Redis trim the stream; return 503                                                 | The script cannot usefully retry, and an error on the customer's page helps nobody. Explicit drops are visible in metrics                                                                                                                                                                                                |
 | 9   | Rollups                  | Raw queries first, rollups if measured                           | Hourly rollups from day one                                                           | Avoids building and maintaining tables the scale may never need. The load test decides                                                                                                                                                                                                                                   |
 | 10  | Realtime                 | Polling every 30 s                                               | WebSocket or SSE push                                                                 | "Current visitors" changes slowly; polling is stateless and cacheable                                                                                                                                                                                                                                                    |
-| 11  | Frontend                 | Nuxt 4 SSR, on the same origin as the API (Caddy routes by path) | SPA calling the API on another origin                                                 | No CORS, first-party cookies, SSR for the public pages. Cost: a second frontend framework                                                                                                                                                                                                                                               |
+| 11  | Frontend                 | React, on the same origin as the API (nginx routes by path). Rendering mode and libraries: [frontend.md](frontend.md) | Nuxt 4 SSR (the first draft); a frontend on another origin | React is what I know best, so features ship faster. Same origin means no CORS and first-party cookies. Cost: learning a second framework (Vue) is no longer part of the project |
 | 12  | Auth                     | Server-side sessions, opaque cookie                              | JWT access + refresh tokens                                                           | Instant revocation and less machinery. Cost: one cached lookup per request                                                                                                                                                                                                                                               |
-| 13  | Task queue               | Taskiq                                                           | ARQ; Celery                                                                           | Async-native, has a scheduler, actively developed. ARQ is simpler but in maintenance mode. Celery is the industry default but sync-first and heavier                                                                                                                                                                     |
+| 13  | Task queue               | None in the MVP. A small asyncio scheduler loop in `worker` runs the daily salt rotation. A queue is chosen when email and alert jobs arrive; Taskiq is the first candidate | Taskiq from day one; ARQ; Celery | One scheduled job doesn't need a broker. Taskiq is async-native and has a scheduler. ARQ is simpler but in maintenance mode. Celery is the industry default but sync-first and heavier |
 | 14  | Geo lookup               | Local country database in memory                                 | City-level database; Cloudflare's country header                                      | No third party sees the IP, and little RAM. City needs many times the memory                                                                                                                                                                                                                                             |
 | 15  | Custom properties        | `Map(String, String)` column                                     | Two parallel arrays (Plausible); JSON column                                          | Simplest to query (`props['plan']`); good enough at this scale                                                                                                                                                                                                                                                           |
 | 16  | Tenancy in ClickHouse    | Shared tables, `site_id` first in the sort key                   | Table or database per customer                                                        | One schema to migrate; the sort key already isolates each site's data on disk                                                                                                                                                                                                                                            |
 | 17  | Hosting                  | One VPS with Docker Compose                                      | Railway (the first draft of this design); Fly.io; Render                              | On Railway this stack came to about $22/month with ClickHouse's RAM as 40% of it, volumes were capped at 5 GB, and the benchmark would have included Railway's own proxy. The VPS is about half the price with over four times the memory. Cost: I own TLS, deploys, backups and patching, and lose preview environments |
 | 18  | Payments                 | Stripe Checkout + webhooks                                       | Own payment form                                                                      | No card data in Mieru; webhook handling is the transferable skill                                                                                                                                                                                                                                                        |
-| 19  | Reverse proxy            | Caddy                                                            | nginx + certbot; Traefik                                                              | Automatic TLS and a config of about fifteen lines. nginx is the more common one in production, so worth knowing as well                                                                                                                                                                                                  |
+| 19  | Reverse proxy            | nginx + certbot | Caddy (the first draft); Traefik | The most common proxy in production, and the one I already know. Every setting is explicit. Cost: certificates need certbot and a renewal timer, and open-source nginx has only passive health checks, so a restart is covered by retrying on the other replica |
 | 20  | Deploy tooling           | Compose + a short deploy script                                  | Kamal; Coolify or Dokploy; Docker Swarm; Kubernetes                                   | Every step is explicit and auditable. Kamal and Swarm do rolling deploys out of the box and are the next step if the script grows                                                                                                                                                                                     |
 | 21  | Cloudflare               | DNS only                                                         | Proxied mode (CDN, DDoS protection, hides the server's address)                       | In proxied mode a third party sees every visitor's IP, which weakens the privacy claim, and its protections can interfere with a load test. Cost: the server's address is public and the script has no CDN                                                                                                               |
 | 22  | Backups                  | Provider disk backups + database dumps to R2                     | Provider backups only                                                                 | Disk backups alone sit with the same provider and capture databases mid-write                                                                                                                                                                                                                                            |
+| 23  | Rate limit and append    | Two Redis calls: pipelined `INCR` + `EXPIRE`, then `XADD` | One Lua script doing both atomically (the first draft); a rate-limit library | No hand-written Lua to test, version and load. The two calls are not atomic, which only lets a few extra events in at the limit. The extra round trip costs well under 1 ms |
 
 ---
 
