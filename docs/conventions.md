@@ -17,7 +17,7 @@ mieru/
 ├── CLAUDE.local.md           # the developer's private notes for Claude (gitignored)
 ├── README.md
 ├── compose.yaml              # local dev: postgres, redis, clickhouse
-├── compose.prod.yaml         # (later) the server: nginx, apps, databases
+├── compose.prod.yaml         # the server: nginx, apps, databases
 ├── .env.example              # every backend setting, with a comment
 ├── .github/
 │   ├── workflows/ci.yml      # lint, types, tests; image push on main
@@ -39,7 +39,7 @@ mieru/
 │   └── learn/                # human-mode tutorials (gitignored)
 ├── ops/
 │   ├── clickhouse/           # low-memory.xml, users.xml
-│   ├── nginx/                # (later) server config
+│   ├── nginx/                # nginx.conf, site template, snippets, self-signed-cert.sh
 │   ├── bootstrap.sh          # (later) fresh server, ready for deploys
 │   ├── deploy.sh             # (later) pull, migrate, rolling restart
 │   ├── backup/               # (later) pg_dump and ClickHouse backup scripts, restore-check.sh
@@ -93,7 +93,7 @@ mieru/
 
 **One backend package, four entrypoints.** `ingest`, `api`, `writer` and `worker` share models, config and helpers. One package and one image means one set of dependencies and one build. Each container starts a different module (section 3).
 
-**`src/` layout.** Tests import the installed package (`from mieru.core.config import Settings`), not whatever is in the current folder. That removes a whole class of import bugs.
+`src/` **layout.** Tests import the installed package (`from mieru.core.config import Settings`), not whatever is in the current folder. That removes a whole class of import bugs.
 
 **Public and private.** The repository is public. Everything in it is project material, including the agent setup in `.claude/` and the task specs. Only `docs/learn/`, `.claude/skills/task/human.md`, `CLAUDE.local.md` and `.claude/settings.local.json` are private and gitignored. Public files never link to private ones.
 
@@ -215,7 +215,7 @@ Fixed here so that tasks written weeks apart fit together. Specs use these names
 
 **Stream entry** (written by `ingest`, read by `writer`): fields `v` (format version), `site_id`, `org_id`, `ts` (ms), `n`, `u`, `r`, `ua`, `vid`, `pvid` (yesterday's visitor id), `cc` (country), `p` (props as JSON). A contract test builds an entry with the real ingest code and reads it with the real writer code (section 6).
 
-**Session record** (`sess:{site_id}:{visitor_id}`): `sid`, `start`, `last`, `source`, `referrer`, `utm_*`, `cc`, `device`, `browser`, `os`.
+**Session record** (`sess:{site_id}:{visitor_id}`): `sid`, `start`, `last`, `source`, `referrer`, `utm_`*, `cc`, `device`, `browser`, `os`.
 
 **Data rules**
 
@@ -401,7 +401,7 @@ Privacy is the product's main promise, so it gets tests like any other feature.
 
 - **Limits:** body up to 8 KB, name up to 120 characters, URL up to 2,000, up to 30 props, prop keys up to 64 and values up to 2,000 characters. Anything else gets `400`.
 - **Cheap checks first:** unknown or blocked sites, bots and spam are dropped in memory, before any Redis call.
-- **Always `202`** for a well-formed request, with `X-Mieru-Dropped` when dropped, so nobody can probe which domains are registered.
+- **Always** `202` for a well-formed request, with `X-Mieru-Dropped` when dropped, so nobody can probe which domains are registered.
 - **Client IP** comes only from the `X-Real-IP` header that nginx sets. Client-sent `X-Forwarded-For` is ignored.
 - **The IP is used for one request** (visitor id, country) and never stored or logged.
 - **Load-test headers** *(after MVP)* work only when `LOADTEST_SECRET` is set, compared with `hmac.compare_digest`.
@@ -517,4 +517,4 @@ A task in an area merges only when its rows hold.
 - **Small PRs:** under about 600 changed lines; agent-written PRs under about 300.
 - **Who does what:** Claude Code never pushes (it's denied in `.claude/settings.json`). The developer pushes, opens the PR and merges once CI is green.
 - **Authorship:** the developer is the only author. Commits and PR descriptions carry no AI attribution: no `Co-Authored-By` trailer and no "Generated with" line. `.claude/settings.json` turns Claude Code's own attribution off.
-- **`docs/features.json`:** `passes` becomes `true` only after the feature's `check` command was run and passed.
+- `docs/features.json`**:** `passes` becomes `true` only after the feature's `check` command was run and passed.

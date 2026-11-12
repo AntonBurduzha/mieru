@@ -617,7 +617,7 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 | Container | Image | Networks | Open to the internet | Restarted by an app deploy |
 |---|---|---|---|---|
 | `nginx` | nginx (official) | edge | ports 80, 443 | Only when its config changes (a reload, not a restart) |
-| `certbot` | certbot/certbot | none | no | No. Started by a timer for renewals, then exits |
+| `certbot` | certbot/certbot | default (internet access only) | no | No. Started by a timer for renewals, then exits |
 | `web` | No container. Static files from the `mieru-web` image, copied to disk by the deploy and served by `nginx` ([frontend.md](frontend.md) section 3) | - | via nginx | Files switched atomically |
 | `ingest-1`, `ingest-2` | mieru-app | edge, internal | no | Yes, one at a time |
 | `api` | mieru-app | edge, internal | no | Yes |
@@ -640,6 +640,9 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 - **Client IP.** nginx sets `X-Real-IP $remote_addr` and drops any `X-Forwarded-For` the client sent. `ingest` reads only `X-Real-IP`, and only from the proxy.
 - **Privacy in logs.** The ingest server block has `access_log off`. The dashboard host uses a log format without `$remote_addr` and without the user agent.
 - **Headers.** HSTS, `X-Content-Type-Options`, and the CSP from [frontend.md](frontend.md) on the dashboard. `Access-Control-Allow-Origin: *` on ingest only.
+- **Container addresses.** A recreated container can come back with a new IP. The upstream servers carry `resolve`, and nginx asks Docker's DNS (`127.0.0.11`) again every 5 seconds, so it follows the new address without a reload. `resolve` is in open-source nginx since 1.27.3.
+- **Error log.** nginx's error lines always carry `client: <ip>`, so the error log keeps only `crit`. Failed connections to the apps show up in their healthchecks and their own logs instead.
+- **Health checks from outside.** On the dashboard host, `/health` and `/health/ready` also go to `api`, so an uptime check and the deploy can reach them at `https://mieru.example/health/ready`.
 
 **Network and access**
 
@@ -761,6 +764,9 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 21  | Cloudflare               | DNS only                                                         | Proxied mode (CDN, DDoS protection, hides the server's address)                       | In proxied mode a third party sees every visitor's IP, which weakens the privacy claim, and its protections can interfere with a load test. Cost: the server's address is public and the script has no CDN                                                                                                               |
 | 22  | Backups                  | Provider disk backups + database dumps to R2                     | Provider backups only                                                                 | Disk backups alone sit with the same provider and capture databases mid-write                                                                                                                                                                                                                                            |
 | 23  | Rate limit and append    | Two Redis calls: pipelined `INCR` + `EXPIRE`, then `XADD` | One Lua script doing both atomically (the first draft); a rate-limit library | No hand-written Lua to test, version and load. The two calls are not atomic, which only lets a few extra events in at the limit. The extra round trip costs well under 1 ms |
+| 24  | Upstream addresses       | `resolve` on every upstream server, through Docker's DNS | `nginx -s reload` after every container restart | A deploy that forgets the reload sends traffic to a dead address, and nothing fails until it does. Cost: needs nginx 1.27.3 or later |
+| 25  | nginx error log          | `crit` only                                                      | `error` level                                                                         | Lower levels print the client IP, which must never reach a log. Cost: upstream failures are visible only in healthchecks and app logs |
+| 26  | App settings in Compose  | An explicit `environment:` list in `compose.prod.yaml`           | `env_file: .env`                                                                      | A stray line in the server's `.env` (for example `GIT_SHA=dev`) can't override the image. Cost: a new setting means editing the Compose file |
 
 ---
 
