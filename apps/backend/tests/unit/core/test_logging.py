@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections.abc import Iterator
 
 import httpx
@@ -100,3 +101,22 @@ async def test_tracebacks_leave_out_local_variables(capsys: pytest.CaptureFixtur
     record = next(r for r in map(json.loads, output.splitlines()) if r["event"] == "lookup_failed")
     assert record["exception"][0]["exc_type"] == "ValueError"
     assert "203.0.113.7" not in output
+
+
+def lookup_country() -> None:
+    # built at runtime, so the source lines a traceback prints never contain the address
+    visitor_ip = ".".join(["198", "51", "100", "23"])
+    raise ValueError(f"no country for a {len(visitor_ip)}-character address")
+
+
+@pytest.mark.usefixtures("restore_logging")
+def test_local_tracebacks_hide_locals(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging(service="api", env="local")
+    try:
+        lookup_country()
+    except ValueError:
+        structlog.get_logger().exception("lookup_failed")
+
+    output = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().err)  # drop colour codes
+    assert "ValueError" in output
+    assert "198.51.100.23" not in output

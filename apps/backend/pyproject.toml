@@ -40,13 +40,26 @@ target-version = "py313"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF", "PT"]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF", "PT", "DTZ", "TID"]
 ignore = ["S101"]
+
+# Time comes from mieru.core.clock, so tests can freeze it
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "use mieru.core.clock.now()"
+"datetime.datetime.utcnow".msg = "use mieru.core.clock.now()"
+"datetime.date.today".msg = "use mieru.core.clock.today()"
+
+[tool.ruff.lint.per-file-ignores]
+"src/mieru/core/clock.py" = ["TID251"]
 
 [tool.mypy]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
+# tests have no __init__.py, so map files to modules from these roots:
+# tests/integration/api/test_health.py is tests.integration.api.test_health
+mypy_path = ["src", "."]
+explicit_package_bases = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

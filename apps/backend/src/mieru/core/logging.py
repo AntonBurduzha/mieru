@@ -1,3 +1,4 @@
+import importlib.util
 import logging
 import re
 import time
@@ -31,8 +32,14 @@ def configure_logging(*, service: str, env: Literal["local", "test", "prod"]) ->
     json_tracebacks = structlog.processors.ExceptionRenderer(
         structlog.tracebacks.ExceptionDictTransformer(show_locals=False),
     )
+    # Locals can hold IPs, tokens or request bodies, so local tracebacks leave them out too
+    local_tracebacks = (
+        structlog.dev.RichTracebackFormatter(show_locals=False)
+        if importlib.util.find_spec("rich") is not None
+        else structlog.dev.plain_traceback
+    )
     renderer = list[Processor](
-        [structlog.dev.ConsoleRenderer()]
+        [structlog.dev.ConsoleRenderer(exception_formatter=local_tracebacks)]
         if env == "local"
         else [json_tracebacks, structlog.processors.JSONRenderer()]
     )

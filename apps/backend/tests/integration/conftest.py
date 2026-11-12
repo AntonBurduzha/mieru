@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 from fastapi import FastAPI
-from pydantic import RedisDsn
+from pydantic import RedisDsn, Secret
 
 from mieru.api.app import create_app as create_api_app
 from mieru.core.config import Settings, get_settings
@@ -17,8 +17,8 @@ from mieru.ingest.app import create_app as create_ingest_app
 def settings() -> Settings:
     """The developer's settings, switched to ENV=test"""
     base = get_settings()
-    redis_test_url = str(base.redis_url).rsplit("/", 1)[0] + "/15"
-    return base.model_copy(update={"env": "test", "redis_url": RedisDsn(redis_test_url)})
+    redis_test_url = str(base.redis_url.get_secret_value()).rsplit("/", 1)[0] + "/15"
+    return base.model_copy(update={"env": "test", "redis_url": Secret(RedisDsn(redis_test_url))})
 
 
 @asynccontextmanager
