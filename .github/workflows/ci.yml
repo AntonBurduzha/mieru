@@ -42,6 +42,7 @@ jobs:
         ports: ["8123:8123"]
         options: --ulimit nofile=262144:262144
     env:
+      ENV: test
       DATABASE_URL: postgresql+asyncpg://mieru:mieru@localhost:5432/mieru
       REDIS_URL: redis://localhost:6379/0
       CLICKHOUSE_URL: http://mieru:mieru@localhost:8123/mieru
@@ -57,13 +58,35 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy src
+      - run: uv run mypy src tests
       - name: Wait for ClickHouse
         run: curl -fsS --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8123/ping
-      - run: uv run pytest
+      - run: uv run pytest --cov=mieru --cov-report=term-missing
+  # Every PR builds the image and imports both apps from it, so a broken image fails review
   image:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          build-args: GIT_SHA=${{ github.sha }}
+          load: true
+          push: false
+          tags: mieru-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Import smoke test
+        run: docker run --rm mieru-app:ci python -c "import mieru.api.app, mieru.ingest.app"
+
+  # A separate job, so only main ever holds a token that can write packages
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: image
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -77,6 +100,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Same inputs as the image job, so every layer comes from its cache
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -89,4 +113,3 @@ jobs:
             ghcr.io/antonburduzha/mieru-app:main
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max

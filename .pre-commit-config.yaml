@@ -1,22 +1,23 @@
 repos:
   - repo: local
     hooks:
-      - id: ruff-format
-        name: ruff format
-        entry: uv run --project apps/backend ruff format
-        language: system
-        types: [python]
-        files: ^apps/backend/
+      # check before format: a --fix can leave code that format then tidies
       - id: ruff-check
         name: ruff check
         entry: uv run --project apps/backend ruff check --fix --exit-non-zero-on-fix
         language: system
         types: [python]
         files: ^apps/backend/
-      - id: mypy
-        name: mypy
-        entry: uv run --directory apps/backend mypy src
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --project apps/backend ruff format
         language: system
         types: [python]
-        files: ^apps/backend/src/
+        files: ^apps/backend/
+      - id: mypy
+        name: mypy
+        entry: uv run --directory apps/backend mypy src tests
+        language: system
+        types: [python]
+        files: ^apps/backend/(src|tests)/
         pass_filenames: false

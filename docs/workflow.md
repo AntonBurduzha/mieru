@@ -36,8 +36,8 @@ uv run pytest                        # unit and integration tests
 Then start the two apps, one per terminal, from `apps/backend`:
 
 ```bash
-uv run uvicorn mieru.api.app:app --reload --port 8000
-uv run uvicorn mieru.ingest.app:app --reload --port 8001
+uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000
+uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001
 ```
 
 - `curl localhost:8000/health/ready` prints `{"postgres":"ok","redis":"ok","clickhouse":"ok"}`.
