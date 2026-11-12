@@ -122,7 +122,12 @@ Proof of done: ruff and format clean; mypy clean; pytest 59 passed, no skips, `T
 
 1. **Must-fix:** a failed `Settings` validation echoed its input, DSN passwords included, into the error that uvicorn prints. Fixed in `581776a` (`hide_input_in_errors=True`, plus `test_validation_errors_hide_secrets`). `exc.errors()` still holds the input by pydantic's design; future error reporting must call `errors(include_input=False)`.
 2. **Should-fix:** the `publish` job pushed a second build that was never smoke-tested. Fixed in `9261978`: `publish` loads its build, imports both apps from it, then pushes that image.
-3. *Optional:* `ClickHouse.close()` doesn't take the lock, so a connect still in flight at shutdown could leave a client open.
-4. *Optional:* no test covers the lock (two concurrent first calls connect once).
-5. *Optional:* `CLAUDE.md`, `docs/workflow.md` and the `/task` skill files still say `mypy src`, while CI runs `mypy src tests`. This is outside this spec's allowed edits.
-6. *Optional:* `actions/checkout@v7` is tag-pinned and keeps the job token in `.git/config`; pin it by SHA and set `persist-credentials: false`.
+3. *Optional, applied at gate 2:* `ClickHouse.close()` didn't take the lock, so a connect still in flight at shutdown could leave a client open. `close()` now takes the lock; `test_close_waits_for_a_connect_in_flight` failed before the change.
+4. *Optional, applied at gate 2:* no test covered the lock. `test_concurrent_first_calls_connect_once` added; it fails when the lock is removed.
+5. *Optional, applied at gate 2:* `CLAUDE.md`, `docs/workflow.md`, `.claude/skills/task/SKILL.md` and `.claude/skills/task/spec-template.md` said `mypy src`; now `mypy src tests`. The developer approved these files beyond the allowed list.
+6. *Optional, applied at gate 2:* `actions/checkout` is pinned to `3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1) with `persist-credentials: false` in all three jobs.
+
+### Gate 2 (2026-11-12)
+- The developer ran "Test it yourself" and confirmed it works.
+- Criterion 15 is still open: it needs this branch's CI run, so it is checked after the push. The final verifier run waits for that.
+- After the optional fixes: ruff, format and `mypy src tests` clean; pytest 61 passed, `TOTAL 342 10 97%`; pre-commit passed.

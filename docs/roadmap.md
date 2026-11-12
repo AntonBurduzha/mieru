@@ -10,9 +10,9 @@
 
 | | |
 |---|---|
-| **Current** | T01 verified, waiting for the developer's test |
+| **Current** | T01 tested by the developer; waiting on CI for criterion 15 |
 | **Next** | T02 Production compose, nginx and TLS (human), after T01 |
-| **Waiting on** | the developer's test of T01 ([docs/tasks/T01-config-startup-hardening.md](tasks/T01-config-startup-hardening.md)), including criterion 15 on a CI run |
+| **Waiting on** | The developer commits the gate-2 fixes, pushes T01 as a draft PR, and checks criterion 15 in CI ([docs/tasks/T01-config-startup-hardening.md](tasks/T01-config-startup-hardening.md)) |
 | **Open questions** | Which server can actually be ordered ([architecture.md](architecture.md) section 11): T03 decides. The production domain name: needed by T02 |
 | **Updated** | 2026-11-12 |
 
