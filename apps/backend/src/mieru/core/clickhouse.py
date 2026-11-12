@@ -34,10 +34,10 @@ class ClickHouse:
         return self._client
 
     async def close(self) -> None:
-        """Close the client if one was made."""
-        if self._client is not None:
-            client, self._client = self._client, None
-            await client.close()
+        async with self._lock:
+            if self._client is not None:
+                client, self._client = self._client, None
+                await client.close()
 
 
 async def ping(ch: ClickHouse) -> None:
