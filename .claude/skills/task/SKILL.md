@@ -31,6 +31,7 @@ The full workflow, written for people, is in `docs/workflow.md`. This file is th
 Rules for every section:
 - Follow `CLAUDE.md` and `docs/conventions.md`. Never weaken a test.
 - Never push and never merge.
+- No AI attribution in commits or PR descriptions: no `Co-Authored-By` trailer, no "Generated with" line. The developer is the only author.
 - Commit only on the task branch. `.claude/hooks/protect.sh` reads the whole command, so a commit message that mentions `.env` or a destructive command gets blocked. Write such a message to `.git/COMMIT_MSG_<ID>` and run `git commit -F` on it.
 - Every status change goes to the spec's frontmatter, its row in `docs/roadmap.md` and the roadmap's "Now" block (fields Current, Next, Waiting on, Open questions, Updated) in the same edit. `Updated` is today's date.
 - End every run with one short block: what happened, the status now, and exactly what the developer does next.

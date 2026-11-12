@@ -516,4 +516,5 @@ A task in an area merges only when its rows hold.
 - **Every commit builds** and passes tests and linters; pre-commit enforces format, lint and types. Never commit a broken state to fix in the next commit.
 - **Small PRs:** under about 600 changed lines; agent-written PRs under about 300.
 - **Who does what:** Claude Code never pushes (it's denied in `.claude/settings.json`). The developer pushes, opens the PR and merges once CI is green.
+- **Authorship:** the developer is the only author. Commits and PR descriptions carry no AI attribution: no `Co-Authored-By` trailer and no "Generated with" line. `.claude/settings.json` turns Claude Code's own attribution off.
 - **`docs/features.json`:** `passes` becomes `true` only after the feature's `check` command was run and passed.
