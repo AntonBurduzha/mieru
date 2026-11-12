@@ -2,7 +2,7 @@
 id: T01
 title: Config and startup hardening
 mode: agent
-status: spec
+status: build
 features: []
 depends: []
 branch: t01-config-startup-hardening

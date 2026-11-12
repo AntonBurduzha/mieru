@@ -10,9 +10,9 @@
 
 | | |
 |---|---|
-| **Current** | T01 spec, waiting for approval |
+| **Current** | T01 build (agent): tests, then implementation |
 | **Next** | T02 Production compose, nginx and TLS (human), after T01 |
-| **Waiting on** | The developer's approval of the T01 spec ([docs/tasks/T01-config-startup-hardening.md](tasks/T01-config-startup-hardening.md)); the replan merged to `main` first |
+| **Waiting on** | Nothing: the agent is building T01 ([docs/tasks/T01-config-startup-hardening.md](tasks/T01-config-startup-hardening.md)) |
 | **Open questions** | Which server can actually be ordered ([architecture.md](architecture.md) section 11): T03 decides. The production domain name: needed by T02 |
 | **Updated** | 2026-11-12 |
 
@@ -47,7 +47,7 @@
 
 | ID | Task | Mode | Features | Depends | Status |
 |---|---|---|---|---|---|
-| T01 | **Config and startup hardening.** Settings safe by default: an unset `ENV` must not show error details or send cookies without `Secure`. The `.env` path doesn't depend on the working directory. `session_ttl_days` accepts 1. The crash-test flag is refused in prod. Database URLs are secret. No local variables in local tracebacks. Apps are built by `uvicorn --factory`, not at import time. The api starts when ClickHouse is down and reports it in `/health/ready`. Also: the `DTZ` lint rule, mypy on tests, a coverage report, ruff check before format in pre-commit, and the image built (not pushed) on every PR | agent | | | spec |
+| T01 | **Config and startup hardening.** Settings safe by default: an unset `ENV` must not show error details or send cookies without `Secure`. The `.env` path doesn't depend on the working directory. `session_ttl_days` accepts 1. The crash-test flag is refused in prod. Database URLs are secret. No local variables in local tracebacks. Apps are built by `uvicorn --factory`, not at import time. The api starts when ClickHouse is down and reports it in `/health/ready`. Also: the `DTZ` lint rule, mypy on tests, a coverage report, ruff check before format in pre-commit, and the image built (not pushed) on every PR | agent | | | build |
 | T02 | **Production compose, nginx and TLS, rehearsed locally.** `compose.prod.yaml`, the nginx config (routing, passive health checks and retries, `X-Real-IP`, no ingest access log, headers), certbot with the webroot challenge, memory limits. The whole stack runs on the Mac with a local certificate | human | | T01 | todo |
 | T03 | **Server bootstrap and first manual deploy.** Order the server, `ops/bootstrap.sh` (user, SSH, updates, Docker), provider firewall, DNS in Cloudflare (DNS only), real certificates, the first deploy by hand | human | | T02 | todo |
 | T04 | **Automated deploy.** `ops/deploy.sh` (pull, migrate, restart ingest replicas one at a time), a CI deploy key that can only run `deploy.sh`, `deploy.yml` with the `production` environment, and a rollback drill | agent | | T03 | todo |
