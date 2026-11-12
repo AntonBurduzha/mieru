@@ -10,9 +10,9 @@
 
 | | |
 |---|---|
-| **Current** | T02 spec, waiting for approval |
+| **Current** | T02 build (human): the developer follows the tutorial |
 | **Next** | T03 Server bootstrap and first manual deploy (human) |
-| **Waiting on** | The developer approves the [T02 spec](tasks/T02-prod-compose-nginx.md) |
+| **Waiting on** | The developer builds [T02](tasks/T02-prod-compose-nginx.md) and runs `/task T02` |
 | **Open questions** | Which server can actually be ordered ([architecture.md](architecture.md) section 11): T03 decides. The production domain name: T02 takes it from a variable and rehearses on `localhost`, so T03 decides |
 | **Updated** | 2026-11-12 |
 
@@ -48,7 +48,7 @@
 | ID | Task | Mode | Features | Depends | Status |
 |---|---|---|---|---|---|
 | T01 | **Config and startup hardening.** Settings safe by default: an unset `ENV` must not show error details or send cookies without `Secure`. The `.env` path doesn't depend on the working directory. `session_ttl_days` accepts 1. The crash-test flag is refused in prod. Database URLs are secret. No local variables in local tracebacks. Apps are built by `uvicorn --factory`, not at import time. The api starts when ClickHouse is down and reports it in `/health/ready`. Also: the `DTZ` lint rule, mypy on tests, a coverage report, ruff check before format in pre-commit, and the image built (not pushed) on every PR | agent | | | done |
-| T02 | **Production compose, nginx and TLS, rehearsed locally.** `compose.prod.yaml`, the nginx config (routing, passive health checks and retries, `X-Real-IP`, no ingest access log, headers), certbot with the webroot challenge, memory limits. The whole stack runs on the Mac with a local certificate | human | | T01 | spec |
+| T02 | **Production compose, nginx and TLS, rehearsed locally.** `compose.prod.yaml`, the nginx config (routing, passive health checks and retries, `X-Real-IP`, no ingest access log, headers), certbot with the webroot challenge, memory limits. The whole stack runs on the Mac with a local certificate | human | | T01 | build |
 | T03 | **Server bootstrap and first manual deploy.** Order the server, `ops/bootstrap.sh` (user, SSH, updates, Docker), provider firewall, DNS in Cloudflare (DNS only), real certificates, the first deploy by hand | human | | T02 | todo |
 | T04 | **Automated deploy.** `ops/deploy.sh` (pull, migrate, restart ingest replicas one at a time), a CI deploy key that can only run `deploy.sh`, `deploy.yml` with the `production` environment, and a rollback drill | agent | | T03 | todo |
 

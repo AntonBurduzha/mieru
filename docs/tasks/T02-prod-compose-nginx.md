@@ -2,7 +2,7 @@
 id: T02
 title: Production compose, nginx and TLS, rehearsed locally
 mode: human
-status: spec
+status: build
 features: []
 depends: [T01]
 branch: t02-prod-compose-nginx
