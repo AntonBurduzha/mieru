@@ -81,17 +81,19 @@ Track progress in the spec's Notes, so an interrupted run can resume. Use `git l
    - `uv run --directory apps/backend mypy src tests`
    - the tests the spec names, plus the web and tracker checks when they changed.
 4. **Commit** in small conventional commits (tests together with the code they cover). Every commit passes the checks.
-5. **Verify.** Use the `verifier` subagent with the spec path. On FAIL, fix the cause and verify again. After three FAILs in a row, record the last report in the spec's Review section, keep `status: build`, and stop with the report.
-6. **Review.** Use the `reviewer` subagent with the spec path. Apply every must-fix finding, commit, and verify again.
-7. **Record** in the spec's Review section:
+5. **Write the debug map:** the spec's "Where to debug" section, following the template. Choose from the code you just wrote: three to five places, each with `file:line`, why it matters, a trigger that really reaches the line (a `curl`, a page, or a named test), and what to inspect. Check every line number against the committed code. Commit: `docs(tasks): <ID> debug map`.
+6. **Verify.** Use the `verifier` subagent with the spec path. On FAIL, fix the cause and verify again. After three FAILs in a row, record the last report in the spec's Review section, keep `status: build`, and stop with the report.
+7. **Review.** Use the `reviewer` subagent with the spec path. Apply every must-fix finding, commit, and verify again. If the fixes moved code, update the debug map's line numbers.
+8. **Record** in the spec's Review section:
    - the verifier's verdict and its evidence table;
    - every finding, with what was done (fixed in `<commit>`, or left optional).
-8. **Set `status: test`** (spec, roadmap, Now block: `Waiting on: the developer's test of <ID>`). Commit: `docs(tasks): <ID> verified`.
-9. **Stop at gate 2.** Show:
-   - the verdict, with one line of evidence per criterion;
-   - the optional findings, numbered;
-   - the spec's "Test it yourself" steps;
-   - "When you've tested it, run `/task <ID>`."
+9. **Set `status: test`** (spec, roadmap, Now block: `Waiting on: the developer's test of <ID>`). Commit: `docs(tasks): <ID> verified`.
+10. **Stop at gate 2.** Show:
+    - the verdict, with one line of evidence per criterion;
+    - the optional findings, numbered;
+    - the spec's "Test it yourself" steps;
+    - the debug map, one line per place: what it decides, `file:line`, the trigger;
+    - "When you've tested it, run `/task <ID>`."
 
 ## 4. Build: human mode
 
@@ -104,7 +106,7 @@ Track progress in the spec's Notes, so an interrupted run can resume. Use `git l
 1. If there are uncommitted changes, list them and ask whether to continue anyway.
 2. Use the `verifier`, then the `reviewer` subagent, as in section 3.
 3. If the verdict is FAIL or there are must-fix findings, append a "Виправ" entry for each to the tutorial: the problem, why it matters, and the exact fix to type, in the tutorial's language rules. Keep `status: build`, and stop with a summary that points to the entries.
-4. Otherwise, record the review in the spec, set `status: test`, commit the spec and the roadmap, and stop at gate 2 as in section 3, step 9.
+4. Otherwise, write the debug map from the developer's code (as in section 3, step 5), record the review in the spec, set `status: test`, commit the spec and the roadmap, and stop at gate 2 as in section 3, step 10.
 
 ## 5. Gate 2: the developer tested it
 
@@ -118,6 +120,7 @@ Track progress in the spec's Notes, so an interrupted run can resume. Use `git l
    - If optional findings exist, ask with a multi-select AskUserQuestion which to apply.
      - Agent mode: apply and commit them.
      - Human mode: append them as "Виправ" entries and stop (keep `status: test`); the next run continues here.
+   - If code moved since the debug map was written, update its line numbers.
    - Run the `verifier` once more. Tell it the developer confirmed the `human:` criteria today. The verdict must be DONE. If it isn't, report it, keep `status: test`, and stop.
    - Flip `passes` to `true` in `docs/features.json` only for features whose check the verifier ran and saw exit 0.
    - Set `status: done` (spec, roadmap, Now block: Current empty, Next = the first `todo` task whose dependencies are all done after this merge). Record the final verdict in the spec. Commit: `docs(tasks): <ID> done`.

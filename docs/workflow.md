@@ -43,6 +43,8 @@ uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001
 - `curl localhost:8000/health/ready` prints `{"postgres":"ok","redis":"ok","clickhouse":"ok"}`.
 - `curl localhost:8001/health/ready` prints `{"redis":"ok"}`.
 
+To run them under the debugger instead, use the Cursor configs in `.vscode/launch.json` (section 12).
+
 **With Claude Code:** run `claude` in the repo root. The project's settings, hooks, agents and skills load from `.claude/`. Type `/status` to see where things stand.
 
 ---
@@ -74,7 +76,8 @@ flowchart TD
     TESTS --> CODE["Claude implements"]
     MODE -- "human" --> TUT["Private tutorial"]
     TUT --> YOU["You implement and commit"]
-    CODE --> VERIFY["verifier: proof of done"]
+    CODE --> MAP["Debug map written in the spec"]
+    MAP --> VERIFY["verifier: proof of done"]
     YOU --> VERIFY
     VERIFY -- "FAIL" --> FIX["Fix: by Claude in agent mode,<br/>by you from a Виправ entry in human mode"]
     FIX --> VERIFY
@@ -170,7 +173,7 @@ The verifier runs every `auto:` command and every proof-of-done command, plus th
 | **FAIL** | A command failed, a criterion isn't met, a file outside the scope changed, or a test was weakened | Agent mode: Claude fixes and verifies again, at most three times, then stops and shows you the report. Human mode: each problem becomes a "Виправ" entry in your tutorial |
 | **NEED_HUMAN** | Nothing failed, but something needs a person: `human:` steps, a check that runs only on the server, or a criterion too vague to check | Usual at gate 2: your test supplies the missing confirmation |
 
-**At gate 2:** follow the spec's "Test it yourself" steps against the real app, not just the tests. Then run `/task <ID>` and answer the question. "No, I found a problem" sends the task back to build with your description. "Yes, it works" leads to the optional fixes, a final verification, and the `features.json` update.
+**At gate 2:** follow the spec's "Test it yourself" steps against the real app, not just the tests. The spec's "Where to debug" section names the places to step through when something looks wrong (section 12). Then run `/task <ID>` and answer the question. "No, I found a problem" sends the task back to build with your description. "Yes, it works" leads to the optional fixes, a final verification, and the `features.json` update.
 
 **After three FAILs in a row,** read the report's "To reach DONE" list. The usual causes:
 - the services are down;
@@ -244,7 +247,31 @@ Nothing here depends on Claude Code. The spec is the contract, and the commands 
 
 ---
 
-## 12. Troubleshooting
+## 12. Debugging
+
+Every spec has a "Where to debug" section, written after the build: three to five places where the task's behaviour is decided, each with a `file:line`, a trigger that reaches it, and what to look at. Start there.
+
+**In Cursor.** `.vscode/launch.json` holds four configs. Select the interpreter `apps/backend/.venv/bin/python` once (Command Palette, "Python: Select Interpreter"), click left of a line number to set a breakpoint, then start a config from the Run and Debug panel:
+
+| Config | Runs | Reach your breakpoint with |
+|---|---|---|
+| `api` | the api on port 8000 | `curl` or the browser |
+| `ingest` | ingest on port 8001 | `curl` |
+| `pytest: current file` | the tests in the open file | the tests themselves |
+| `pytest: -k` | the tests matching an expression it asks for | the tests themselves |
+
+The app configs run without `--reload`: reload runs the app in a child process, and the debugger stays attached to the parent. Restart the config after a change. Stop any `uvicorn` already running on the same port first. Each config sets `envFile` to a file that doesn't exist. This stops Cursor from loading `.env` itself: Cursor's parser keeps the inline `# comments` as part of the values, and those environment variables would override the app's own reading of `.env`.
+
+**In the terminal**, from `apps/backend`:
+- `breakpoint()` on a line stops there and opens [pdb](https://docs.python.org/3/library/pdb.html#debugger-commands): `p <expr>` prints a value, `n` runs the next line, `s` steps into a call, `c` continues, `q` quits. Remove it before committing. See [`breakpoint()`](https://docs.python.org/3/library/functions.html#breakpoint).
+- `uv run pytest <path> -k <name> --pdb` opens pdb where a test fails, with its variables in scope. [`--pdb`](https://docs.pytest.org/en/stable/how-to/failures.html#using-python-library-pdb-with-pytest)
+- `-s` shows `print` output; `--lf` reruns only the tests that failed last time.
+
+**Logs.** Every response carries an `X-Request-Id` header (`curl -i` shows it). Every log line of that request carries the same `request_id`, so search the app's terminal for it. Locally the logs are readable lines; in the other environments they are JSON.
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
