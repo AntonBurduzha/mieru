@@ -110,7 +110,7 @@ Everything between the two gates runs without you in agent mode. Each run of `/t
 | `/task <ID>` | Moves the task one stage forward from its status (section 3) | The spec, a build report at gate 2, or the push command at the end |
 | `/task <ID> --human` / `--agent` | Same, with the mode overridden. Only before the build starts | |
 | `/verify <ID>` | Runs the proof-of-done check in a separate read-only agent | `VERDICT: DONE / FAIL / NEED_HUMAN` with evidence per criterion |
-| `/commit [one] [hint]` | Commits the changes you reviewed as small conventional commits, with messages from the diff. With something staged, commits only that. Never pushes | The new commits and what is left |
+| `/commit [one] [hint]` | Commits the changes you reviewed as small conventional commits, with messages from the diff. With something staged, commits only that. Then rewrites the PR description in `.git/pr-<ID>.md`. Never pushes | The new commits, the PR description, and the push line |
 | `/code-review` | Claude Code's built-in bug-focused review of the current diff | Findings; an optional second opinion next to the spec-aware reviewer |
 | `! <command>` | Runs a shell command yourself, inside the session | Used for `git push`, which Claude is not allowed to run |
 

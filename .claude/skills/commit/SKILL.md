@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Commit the developer's reviewed changes as small conventional commits, with messages written from the diff. Never pushes.
+description: Commit the developer's reviewed changes as small conventional commits, with messages written from the diff, and refresh the branch's PR description. Never pushes.
 argument-hint: "[one] [a hint about intent or scope]"
 disable-model-invocation: true
 ---
@@ -63,10 +63,33 @@ For each group, in order:
 
 Never use `--no-verify`. Never amend or rewrite existing commits unless asked. Never push.
 
-## 6. Report
+## 6. Write the PR description
+
+After the commits, write the description of the whole branch to `.git/pr-<ID>.md` (`.git/pr-<branch>.md` off a task branch). It lives inside `.git`, so it's never committed. Rewrite it on every run, so it always covers `git log main..HEAD`.
+
+Follow `.github/pull_request_template.md` section by section:
+
+- **Task:** the spec path, the mode and the features from the spec's frontmatter (`none` when empty). Off a task branch, write `none`.
+- **What and why:** what the branch changes and why, from the spec's goal and every commit on the branch. Write it for a reviewer, as short bullets grouped by area.
+- **Proof of done:**
+  - The verdict the spec's Review section records last. Never write DONE unless the verifier gave it.
+  - The proof-of-done commands with their key output lines, taken from the spec's Review section or from runs in this session. Never invent output.
+  - Any criterion that is still open, and where it gets checked.
+- **Risk:** tick a box only when the diff really does it, and add a few words saying why.
+- **Checklist:**
+  - Tick "tested it myself" only when the spec records that the developer confirmed it.
+  - Tick "tests" only when the branch adds tests and none were deleted, skipped or weakened.
+  - Tick `features.json` when no feature was flipped, or when each flip had its check run green.
+  - Leave "I read the full diff" for the developer.
+
+## 7. Report
 
 End with a short block:
 
 - The new commits, from `git log --oneline <the commit you started from>..HEAD`.
 - Anything left uncommitted, and why.
-- The next step. On a task branch, that's the push line: `! git push -u origin <branch>`, or the `/task` step that comes next.
+- The PR description file you wrote.
+- The next step:
+  - **No PR yet:** `! git push -u origin <branch> && gh pr create --draft --title "<conventional title>" --body-file .git/pr-<ID>.md`.
+  - **A PR is open** (check with `gh pr view <branch> --json url`): `! git push && gh pr edit --body-file .git/pr-<ID>.md`.
+  - **On a task branch:** also the `/task` step that comes next.
