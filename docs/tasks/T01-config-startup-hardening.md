@@ -2,7 +2,7 @@
 id: T01
 title: Config and startup hardening
 mode: agent
-status: test
+status: done
 features: []
 depends: []
 branch: t01-config-startup-hardening
@@ -131,3 +131,13 @@ Proof of done: ruff and format clean; mypy clean; pytest 59 passed, no skips, `T
 - The developer ran "Test it yourself" and confirmed it works.
 - Criterion 15 is still open: it needs this branch's CI run, so it is checked after the push. The final verifier run waits for that.
 - After the optional fixes: ruff, format and `mypy src tests` clean; pytest 61 passed, `TOTAL 342 10 97%`; pre-commit passed.
+
+### Final verification (2026-11-12): DONE
+
+- The verifier ran every `auto:` criterion and the proof of done on `feb36db`: all exit 0. pytest: 61 passed, no skips, `TOTAL 342 10 97%`.
+- Criterion 15 was confirmed on PR #6 (CI run 43231435714), by the developer and by the verifier:
+  - `backend`: `ENV: test`, `mypy src tests`, and the coverage table at the end.
+  - `image`: build plus the import smoke test, with no push step.
+  - `publish`: skipped.
+- Scope note: the developer asked for the `/commit` skill (`.claude/skills/commit/`, plus its rows in `docs/workflow.md`) during this task. It is workflow tooling outside the allowed list. It doesn't link any private file; it only names private paths so it never commits them.
+- `docs/features.json`: no change, because the task has no features.
