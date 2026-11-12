@@ -2,12 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(uv run pytest *)", "Bash(uv run ruff *)", "Bash(uv run mypy *)",
+      "Bash(uv run --directory apps/backend pytest *)",
+      "Bash(uv run --directory apps/backend ruff *)",
+      "Bash(uv run --directory apps/backend mypy *)",
       "Bash(pnpm --dir apps/web *)", "Bash(pnpm --dir apps/tracker *)",
-      "Bash(docker compose ps)", "Bash(git status)", "Bash(git diff *)", "Bash(git log *)"
+      "Bash(docker compose ps)", "Bash(docker compose ps *)", "Bash(docker compose up -d)",
+      "Bash(git status)", "Bash(git status *)", "Bash(git diff *)", "Bash(git log *)",
+      "Bash(git branch *)", "Bash(git show *)", "Bash(git rev-parse *)",
+      "Bash(gh pr view *)", "Bash(gh pr list *)",
+      "Bash(jq *)"
     ],
     "deny": [
       "Read(./.env)", "Read(./**/.env)", "Read(./**/*.pem)",
-      "Bash(git push *)", "Bash(ssh *)", "Bash(rm -rf *)"
+      "Bash(git push)", "Bash(git push *)", "Bash(ssh *)", "Bash(rm -rf *)"
     ]
   },
   "hooks": {
@@ -16,7 +23,7 @@
         "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format.sh" }] }
     ],
     "PreToolUse": [
-      { "matcher": "Bash|Edit|Write|Read",
+      { "matcher": "Bash|Edit|Write|Read|Grep|Glob",
         "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect.sh" }] }
     ]
   }
