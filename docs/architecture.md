@@ -608,9 +608,10 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 |---|---|
 | **Size** | 4 shared vCPU, 8 GB RAM, 80 GB local SSD, Ubuntu LTS |
 | **Reference offer** | Hetzner CX33 in Germany or Finland: 8.49 EUR/month on Hetzner's price list of 15 June 2026 |
+| **Ordered (T03)** | CPX32 in Helsinki, Ubuntu 26.04 LTS: 30.49 EUR/month on 2026-11-13, over the 15 EUR target, a stopgap while CX33 can't be ordered. x86 only: the `mieru-app` image is built for `linux/amd64` |
 | **Why Hetzner** | EU company and data centres, hourly billing (useful for load tests), a firewall and backups from the provider |
 
-> ⚠️ **Availability risk.** In October 2026 Hetzner's site marks its cost-optimized line, which CX33 belongs to, as "currently not available". The same size on the next line up (CPX32) is 35.49 EUR/month. Nothing in this design is specific to Hetzner: any EU server of this size under 15 EUR/month will do. The first task of the build is to check what can actually be ordered.
+> ⚠️ **Availability risk.** In October 2026 Hetzner's site marks its cost-optimized line, which CX33 belongs to, as "currently not available". The same size on the next line up (CPX32) costs several times more: the price paid is in the "Ordered" row. Nothing in this design is specific to Hetzner: any EU server of this size under 15 EUR/month will do. T03 checked what could be ordered; the result is the "Ordered" row above.
 
 **Containers**
 
@@ -652,6 +653,8 @@ One `Caddyfile` in `ops/caddy/` describes both sites.
 - The provider's firewall, outside the server, allows only 22, 80 and 443. This matters because Docker writes its own packet-filter rules and bypasses a host firewall such as `ufw` for published ports.
 - SSH with keys only; no root login, no passwords.
 - Cloudflare hosts DNS in DNS-only mode (trade-off 21).
+- DNS has A records only, no AAAA (trade-off 30).
+- Server layout: one `deploy` user with an SSH key, the `docker` group and passwordless sudo (trade-off 32). The repository is checked out at `/srv/mieru`, and the stack's variables live in `/srv/mieru/.env`, mode 600 (trade-off 33). `ops/bootstrap.sh` prepares a fresh server; `ops/README.md` is the runbook.
 - Secrets live in an `.env` file on the server, readable only by the deploy user, never in the repository. CI holds one SSH deploy key and a registry token.
 
 **Deploy pipeline**
@@ -772,6 +775,10 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 27  | Health URLs on the dashboard host | `/health` and `/health/ready` on the dashboard host go to `api` | Move the routes under `/api/v1/` | An uptime check and the deploy can use `https://mieru.example/health/ready`. Moving the routes would change Python and every health check |
 | 28  | Domain                   | A variable (`MIERU_DOMAIN`); ingest is `in.` in front of it | Hard-coded in the proxy config | The same files run on the Mac with `localhost` and on the server with the real name, which T03 chooses |
 | 29  | HTTP/3                   | Off: HTTP/1.1 and HTTP/2 only | On, with UDP 443 published and allowed by the firewall | One small request per page view gains nothing measurable from QUIC. Cost: none known; it can be turned on later without other changes |
+| 30 | IPv6 for visitors | No AAAA records: visitors connect over IPv4 | `enable_ipv6` on the `edge` network with Docker's ip6tables, and AAAA records | Through Docker's userland proxy every IPv6 visitor reaches Caddy as the bridge gateway, so the daily hash would merge them all into one visitor. Cost: IPv6-only clients depend on their network's NAT64. Revisit in T26 |
+| 31 | Server OS | Ubuntu 26.04 LTS | Ubuntu 24.04 LTS; Debian 13 | Supported until 2031, and Docker publishes packages for it. Cost: `sudo-rs` and the Rust coreutils by default, younger than the GNU tools |
+| 32 | Server access | One `deploy` user: SSH key, `docker` group, passwordless sudo | An `admin` user with sudo and a `deploy` user with Docker only | Membership of the `docker` group already equals root, so a second user adds a login but no real boundary. T04 limits the CI key with a forced command instead |
+| 33 | Code on the server | A git checkout of `main` in `/srv/mieru`; `MIERU_TAG` is its commit | Copying `compose.prod.yaml` and `ops/` with `scp` or rsync | The config and the image always come from one commit, and a deploy is a `git pull` plus an image pull. Cost: the server needs read access to the repository, which is public today |
 
 ---
 
