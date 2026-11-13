@@ -1,6 +1,6 @@
 # Mieru: product
 
-> What Mieru is for, who uses it, and what "done" means for each feature. *How* it works is in [architecture.md](architecture.md). The build order is in [roadmap.md](roadmap.md).
+> What Mieru is for, who uses it, and what "done" means for each feature. *How* it works is in [architecture/](architecture/README.md). The build order is in [roadmap.md](roadmap.md).
 
 ---
 
@@ -26,7 +26,7 @@ Mieru is a smaller Plausible, built end to end: a write-heavy pipeline, a column
 
 ## 3. User stories and acceptance criteria
 
-The ids match the functional requirements in [architecture.md](architecture.md) section 2. [features.json](features.json) has one entry per id, with the command that proves it.
+The ids match the functional requirements in [architecture/README.md](architecture/README.md#functional-requirements). [features.json](features.json) has one entry per id, with the command that proves it.
 
 ### Tracking (MVP)
 

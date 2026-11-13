@@ -1,7 +1,7 @@
 ---
 name: task
-description: Run one roadmap task through spec, build, proof of done, review and finish. Resumes from the status in the task's spec.
-argument-hint: <task id, e.g. T07> [--agent|--human]
+description: Run one roadmap task in two runs. Run 1 writes the spec, gets it approved, then builds it (agent mode) or writes the tutorial (human mode). Run 2, after the developer's test, checks, fixes and makes the task's one commit.
+argument-hint: <task id, e.g. T07> [--agent|--human] [feedback from your test]
 disable-model-invocation: true
 ---
 
@@ -9,130 +9,161 @@ disable-model-invocation: true
 
 Arguments: `$ARGUMENTS`
 
-The full workflow, written for people, is in `docs/workflow.md`. This file is the procedure.
+This file is the procedure. `docs/workflow.md` explains the same flow to people; you don't need it.
 
-## 0. Parse and locate
+## Start
 
-1. Parse `$ARGUMENTS`: the first word is the task id (normalise `t7`, `7` or `T7` to `T07`). `--agent` or `--human` is an optional mode override. Anything else: stop and print the usage line `/task <id> [--agent|--human]`.
-2. Find the task's row in `docs/roadmap.md` (title, mode, features, depends). If there is none, stop.
-3. Look for its spec: `docs/tasks/<ID>-*.md`. Read its frontmatter if it exists.
-4. The mode is the flag if given, otherwise the spec's `mode`, otherwise the roadmap's. A flag that differs from the spec's mode is allowed only while `status: spec`. Later, stop and explain that the mode is fixed once the build started.
-5. Dispatch on the spec's status:
+1. **Parse the arguments.**
+   - The first word is the task id: `t7`, `7` and `T7` all become `T07`.
+   - `--agent` or `--human` overrides the mode.
+   - Any other text is the developer's feedback for run 2.
+   - With no id, stop and print `/task <id> [--agent|--human] [feedback]`.
+2. **Find the task.** Read its row in `docs/roadmap.md` (title, mode, features, depends); stop if there is none. Read the spec `docs/tasks/<ID>-*.md` if it exists.
+3. **Pick the mode:** the flag, else the spec's `mode`, else the roadmap's. A flag can change the mode only before the build (no spec yet, or `status: spec`).
+4. **Dispatch on the spec's status:**
 
 | Spec | Do |
 |---|---|
-| none | Section 1: write the spec, then gate 1 |
-| `status: spec` | Gate 1 (section 2) |
-| `status: build`, agent mode | Section 3: resume the build |
-| `status: build`, human mode | Section 4: write the tutorial, or check the developer's work |
-| `status: test` | Gate 2 (section 5) |
-| `status: done` | Section 6: after the PR |
+| none | Run 1: Spec, then Gate 1 |
+| `spec` | Gate 1: an earlier session ended before the answer |
+| `build`, agent mode | Agent build: resume where the spec's Notes and `git status` say it stopped |
+| `build`, human mode, no tutorial yet | Tutorial |
+| `build`, human mode, tutorial written | Run 2: Feedback, Human check, Finish |
+| `test` | Run 2: Feedback, Finish |
+| `done` | Report `gh pr view <branch> --json state,url` and name the next task |
 
-Rules for every section:
-- Follow `CLAUDE.md` and `docs/conventions.md`. Never weaken a test.
-- Never push and never merge.
-- No AI attribution in commits or PR descriptions: no `Co-Authored-By` trailer, no "Generated with" line. The developer is the only author.
-- Commit only on the task branch. `.claude/hooks/protect.sh` reads the whole command, so a commit message that mentions `.env` or a destructive command gets blocked. Write such a message to `.git/COMMIT_MSG_<ID>` and run `git commit -F` on it.
-- Every status change goes to the spec's frontmatter, its row in `docs/roadmap.md` and the roadmap's "Now" block (fields Current, Next, Waiting on, Open questions, Updated) in the same edit. `Updated` is today's date.
-- End every run with one short block: what happened, the status now, and exactly what the developer does next.
+## Rules
 
-## 1. Write the spec (gate 1 comes after)
+- **Two runs per task.**
+  - Run 1 ends when it's the developer's turn: testing in agent mode, the tutorial in human mode.
+  - Run 2 ends with the task's one commit.
+  - A third run happens only after a reported problem, or a fix the developer has to type.
+- **Commits.**
+  - The spec gets its own commit at gate 1.
+  - After that, nothing is committed until Finish makes the task's one commit on the task branch.
+  - A change before the push is amended into that commit (`git commit --amend --no-edit`). A change after the push goes in a new commit.
+- **Status** lives in the spec's frontmatter and in its row in `docs/roadmap.md`. Change both in the same edit. The Now block (Next, Open questions, Updated: today) changes only when Next or an open question does.
+- **Docs are yours in both modes:**
+  - every Markdown file the spec allows;
+  - the roadmap and `docs/features.json`;
+  - the spec's Notes, Review and "Where to debug".
 
-1. Check `depends`. If a dependency isn't `done` in the roadmap, say which one and stop, unless the developer confirms they want to go ahead.
-2. Read before writing:
-   - the feature entries in `docs/features.json` and their stories in `docs/product.md`;
-   - the sections of `docs/architecture.md` that the task touches;
-   - `docs/conventions.md`, and `docs/frontend.md` for web work;
-   - the current code the task changes, plus `pyproject.toml`, `uv.lock` or `package.json` for the installed versions.
+  The developer never edits docs by hand. In human mode they write everything else.
+- **Allowed files only.** If the work needs a file outside the spec's list, stop and ask.
+- **Subagents** (`test-writer`, `reviewer`, `verifier`) get the spec's path in their prompt.
+- **Commit messages go in a file.** `.claude/hooks/protect.sh` blocks an inline message that mentions `.env` or a destructive command, so write it to a file and use `git commit -F`.
+- **End every run with a short block:** what happened, the status now, and the exact command the developer runs next.
+
+## Run 1
+
+### Spec
+
+1. **Start from `main`.** The tree must be clean; if it isn't, list the changes and stop. Then run `git switch main && git pull --ff-only`.
+2. **Check the dependencies.** If one isn't `done` in the roadmap, name it and stop, unless the developer confirms they want to go ahead.
+3. **Read:**
+   - the feature entries in `docs/features.json`, and their stories in `docs/product.md`;
+   - `docs/architecture/README.md`, then only the topic files and `decisions.md` rows the task touches;
+   - `docs/conventions.md` sections 1, 3, 5 and 6, and the parts of section 7 for the task's area;
+   - `docs/frontend.md`, for web work;
+   - the code the task changes, and the installed versions.
 
    Every path, name and API in the spec must match the repo as it is.
-3. Write `docs/tasks/<ID>-<slug>.md` from `.claude/skills/task/spec-template.md`:
+4. **Write `docs/tasks/<ID>-<slug>.md`** from `.claude/skills/task/spec-template.md`.
    - The slug is 2-4 words from the title, in kebab case. The branch is `<id lowercase>-<slug>`.
-   - Every acceptance criterion carries an `auto:` command or `human:` steps. Commands run from the repo root.
-   - The allowed files are specific.
-   - Aim for under 150 lines. The spec is public: English, and no links to private files.
-4. Set `status: spec` and the mode, and update the roadmap row and the "Now" block (Current: `<ID> spec, waiting for approval`).
-5. Stop. Show the goal, the criteria (one line each), the allowed files, and any decision you made that the developer might disagree with. Then: "Edit the spec directly or tell me what to change. When it's right, run `/task <ID>` again."
+   - Every criterion has an `auto:` command or `human:` steps.
+   - The allowed files are specific, and include every doc the task changes.
+5. **Set `status: spec` and the mode,** in the spec and in the roadmap row.
 
-## 2. Gate 1: approve the spec
+### Gate 1
 
-1. Ask with AskUserQuestion: "Approve the <ID> spec and start the build (<mode> mode)?" Options: "Approve", "I have changes".
-2. If there are changes, apply them to the spec and stop again at gate 1.
-3. If approved, prepare the branch:
-   - The working tree must be clean except for the spec and `docs/roadmap.md`. If not, list the other changes and stop.
-   - `git switch main`, `git pull --ff-only`, then `git switch -c <branch>`.
-   - Set `status: build` (spec, roadmap, Now block), then commit the spec and the roadmap: `docs(tasks): <ID> spec`.
-4. Continue with section 3 (agent) or section 4 (human).
+1. **Show** the goal, the criteria (one line each), the allowed files, and any decision the developer might disagree with.
+2. **Ask with AskUserQuestion:** "Approve the <ID> spec and start the build (<mode> mode)?" The options are "Approve" and "Not now"; changes come as text through "Other".
+3. **Re-read the spec file,** since the developer may have edited it while the question waited.
+   - Changes asked for: apply them, and ask again.
+   - "Not now": stop, and leave the status as it is.
+4. **Approve:**
+   - The tree must hold only the spec and the roadmap.
+   - `git switch -c <branch>`.
+   - Set `status: build`.
+   - Commit both files as `docs(tasks): <ID> spec`.
+   - Continue with the Agent build or the Tutorial.
 
-## 3. Build: agent mode
+### Agent build
 
-Track progress in the spec's Notes, so an interrupted run can resume. Use `git log main..HEAD` and `git status` to see what already exists.
+Note progress in the spec's Notes, so an interrupted run can resume.
 
-1. **Tests first.** Use the `test-writer` subagent with the spec path. Then check:
-   - `git status --porcelain` shows only test files;
-   - every `auto:` criterion has at least one test;
+1. **Tests first.** Run the `test-writer` subagent, then check that:
+   - `git status` shows only test files besides the spec;
+   - every `auto:` criterion has a test;
    - the tests fail because the behaviour is missing, not because of a typo or a broken fixture.
 
-   Fix gaps with the subagent before going on. Don't commit failing tests.
-2. **Implement** in this session, inside the allowed files only. If the work needs a file outside the list, stop and ask. Follow the patterns the spec points to.
-3. **Check locally:**
-   - `uv run --directory apps/backend ruff check .`
-   - `uv run --directory apps/backend ruff format --check .`
-   - `uv run --directory apps/backend mypy src tests`
-   - the tests the spec names, plus the web and tracker checks when they changed.
-4. **Commit** in small conventional commits (tests together with the code they cover). Every commit passes the checks.
-5. **Write the debug map:** the spec's "Where to debug" section, following the template. Choose from the code you just wrote: three to five places, each with `file:line`, why it matters, a trigger that really reaches the line (a `curl`, a page, or a named test), and what to inspect. Check every line number against the committed code. Commit: `docs(tasks): <ID> debug map`.
-6. **Verify.** Use the `verifier` subagent with the spec path. On FAIL, fix the cause and verify again. After three FAILs in a row, record the last report in the spec's Review section, keep `status: build`, and stop with the report.
-7. **Review.** Use the `reviewer` subagent with the spec path. Apply every must-fix finding, commit, and verify again. If the fixes moved code, update the debug map's line numbers.
-8. **Record** in the spec's Review section:
-   - the verifier's verdict and its evidence table;
-   - every finding, with what was done (fixed in `<commit>`, or left optional).
-9. **Set `status: test`** (spec, roadmap, Now block: `Waiting on: the developer's test of <ID>`). Commit: `docs(tasks): <ID> verified`.
-10. **Stop at gate 2.** Show:
-    - the verdict, with one line of evidence per criterion;
-    - the optional findings, numbered;
-    - the spec's "Test it yourself" steps;
-    - the debug map, one line per place: what it decides, `file:line`, the trigger;
-    - "When you've tested it, run `/task <ID>`."
+   Close gaps with the subagent. If the spec has no tests to write (shell or CI work), skip this step and note why.
+2. **Implement** in this session, following the patterns the spec points to.
+3. **Run the checks** from `CLAUDE.md` "Commands" for every app the diff touches, plus the tests the spec names, until they're green.
+4. **Update the docs** the spec lists, so they describe the code as built.
+5. **Review.** Run the `reviewer` subagent. Apply every must-fix and should-fix finding, then run step 3 again. Leave the nits.
+6. **Verify.** Run the `verifier` subagent.
+   - On FAIL, fix the cause and verify again.
+   - After three FAILs in a row: record the last report in Review, keep `status: build`, and stop with its "To reach DONE" list.
+7. **Write the debug map** from the code on disk, and check every line number.
+8. **Fill in the Review section** in the template's compact form.
+9. **Set `status: test`.** End the run with:
+   - the verdict, one line per criterion;
+   - the nits, numbered;
+   - the "Test it yourself" steps;
+   - the debug map, one line per place;
+   - "Review the diff in Cursor and test it. Works: `/task <ID>`. A problem: `/task <ID> <what's wrong>`. To apply a nit: `/task <ID> apply nit 2`."
 
-## 4. Build: human mode
+   If a `human:` criterion needs evidence only the developer can produce (server output, say), list its commands and ask for their output with `/task <ID>`.
 
-**If `docs/learn/<ID>-<slug>.md` doesn't exist:**
-1. Write it following `.claude/skills/task/human.md`. It is private and gitignored, so never commit or link it.
-2. Don't edit source code, config or tests yourself.
-3. Stop: "Your turn: follow `docs/learn/<ID>-<slug>.md`. Commit as it says. Run `/task <ID>` when its steps are done."
+### Tutorial (human mode)
 
-**If the tutorial exists** (the developer says the steps are done):
-1. If there are uncommitted changes, list them and ask whether to continue anyway.
-2. Use the `verifier`, then the `reviewer` subagent, as in section 3.
-3. If the verdict is FAIL or there are must-fix findings, append a "Виправ" entry for each to the tutorial: the problem, why it matters, and the exact fix to type, in the tutorial's language rules. Keep `status: build`, and stop with a summary that points to the entries.
-4. Otherwise, write the debug map from the developer's code (as in section 3, step 5), record the review in the spec, set `status: test`, commit the spec and the roadmap, and stop at gate 2 as in section 3, step 10.
+1. **Write `docs/learn/<ID>-<slug>.md`** following `.claude/skills/task/human.md`. It is private and gitignored: never commit it or link to it.
+2. **Don't touch the task's code, config, migrations, tests or docs.** The docs are written in run 2, from the developer's code.
+3. **End the run:** "Your turn: follow `docs/learn/<ID>-<slug>.md`, and don't commit. When its Definition of done passes, run `/task <ID>`."
 
-## 5. Gate 2: the developer tested it
+## Run 2
 
-1. Ask with AskUserQuestion: "Did <ID> pass your own test?" Options: "Yes, it works", "No, I found a problem".
-2. **A problem:** get the details if they aren't given.
-   - Agent mode: fix it with a test that reproduces it, then go through verify and review again.
-   - Human mode: append a "Виправ" entry to the tutorial.
+Running `/task <ID>` now means "I tested it and it works". It also confirms the `human:` criteria.
 
-   Set `status: build` and stop.
-3. **It works:**
-   - If optional findings exist, ask with a multi-select AskUserQuestion which to apply.
-     - Agent mode: apply and commit them.
-     - Human mode: append them as "Виправ" entries and stop (keep `status: test`); the next run continues here.
-   - If code moved since the debug map was written, update its line numbers.
-   - Run the `verifier` once more. Tell it the developer confirmed the `human:` criteria today. The verdict must be DONE. If it isn't, report it, keep `status: test`, and stop.
-   - Flip `passes` to `true` in `docs/features.json` only for features whose check the verifier ran and saw exit 0.
-   - Set `status: done` (spec, roadmap, Now block: Current empty, Next = the first `todo` task whose dependencies are all done after this merge). Record the final verdict in the spec. Commit: `docs(tasks): <ID> done`.
-   - Write the PR description to `.git/pr-<ID>.md` (inside `.git`, so it's never committed), following `.github/pull_request_template.md`: the spec link, what and why, the proof (commands and key output), and the risk boxes. Leave "Tested it myself" ticked, since the developer just confirmed it.
-   - Stop and give the command for the developer to run:
+### Feedback (text after the id)
 
-     `! git push -u origin <branch> && gh pr create --draft --title "<conventional title>" --body-file .git/pr-<ID>.md`
+- **Evidence** (pasted output): keep it for Review, and go on.
+- **A request** ("apply nit 2"): apply it, and go on.
+- **A problem:**
+  - Agent mode: reproduce it in a test, fix it, and run the checks. Then run the `reviewer` (if the fix is more than a few lines) and the `verifier`.
+  - Human mode, a small fix (a few lines in one function, no design change): apply it, and explain it in a "Виправ" entry.
+  - Human mode, a bigger fix: write a "Виправ" entry with the exact fix for the developer to type.
 
-     Then: "Mark it ready when CI is green, merge it, and run `/task <ID>` to close it."
+  Note the problem in Notes, keep the status, and stop: "Test it again, then `/task <ID>`."
 
-## 6. After the PR
+### Human check (human mode)
 
-1. Check with `gh pr view <branch> --json state,url`.
-2. **Not merged yet:** show the PR state and URL. If no PR exists, give the section 5 command again.
-3. **Merged:** say so, suggest `git switch main && git pull`, and name the next task and its mode.
+1. **Check the scope.** If any change is outside the allowed files, list it and ask.
+2. **Write the Markdown docs** the spec lists, from the developer's code.
+3. **Review and verify:** run the `reviewer` and the `verifier` in parallel, as two subagent calls in one message.
+4. **Handle each FAIL and each must-fix or should-fix finding:**
+   - **Small, and not marked `(design)`:** fix it yourself. Add a "Виправ" entry marked as applied by Claude: the problem, why it matters, and what changed.
+   - **Otherwise:** add a "Виправ" entry for the developer: the problem, why it matters, and the exact fix to type. Then record the review, keep `status: build`, and stop: "Your turn: Виправ <N>-<M>, then `/task <ID>`."
+
+   Nits go into Review and are not applied.
+5. **Write the debug map** from the developer's code, and check every line number.
+
+### Finish
+
+1. **The verdict must be DONE.**
+   - If the tree changed since the last verdict, run the `verifier` again, and tell it the developer has confirmed the `human:` criteria.
+   - If it didn't change, the last verdict stands. It counts as DONE when it was DONE, or was NEED_HUMAN only for things the developer has now confirmed or supplied.
+   - Otherwise: record it, keep the status, and stop with "To reach DONE".
+2. **Update the debug map's line numbers** if the code moved.
+3. **Flip `passes` to `true`** in `docs/features.json`, only for features whose check the verifier ran and saw exit 0.
+4. **Close the task:**
+   - Set `status: done`.
+   - Set the Now block's Next to the first `todo` task whose dependencies will all be done after this merge.
+   - Add the Done line to Review.
+5. **Commit:** follow `.claude/skills/commit/SKILL.md`. It makes one commit of everything since the spec commit, and writes the PR description to `.git/pr-<ID>.md`.
+6. **End the run with:**
+   - `git log --oneline -1`, then "Look it over in Cursor. Anything to change before the push: tell me, and I'll amend it.";
+   - `! git push -u origin <branch> && gh pr create --draft --title "<commit subject>" --body-file .git/pr-<ID>.md`;
+   - "Mark it ready when CI is green, then merge.";
+   - "Next: `/task <next ID>` (<mode>). It starts from an up-to-date `main`."

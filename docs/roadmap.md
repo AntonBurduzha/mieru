@@ -6,13 +6,11 @@
 
 ## Now
 
-<!-- /task keeps this block current. Keep the field names; the skill edits them in place. -->
+<!-- /task edits these fields in place when Next or an open question changes. What's in progress is the Status column below. -->
 
 | | |
 |---|---|
-| **Current** | |
 | **Next** | T05 (human) |
-| **Waiting on** | The merge of `t04-deploy-hardening` (T04's optional review fixes and its `done` status) |
 | **Open questions** | IPv6: T03 publishes no AAAA record, so every visitor connects over IPv4; IPv6 on `edge` waits for T26 |
 | **Updated** | 2026-11-13 |
 
@@ -22,18 +20,10 @@
 
 - **Mode** is how the task is built:
   - `agent` (the default): agents implement it, and you approve the spec and test the result.
-  - `human`: you write the code from a private tutorial, and agents verify and review it.
+  - `human`: you write the code from a private tutorial; Claude writes the docs, and agents review and verify your code.
 
-  `/task <id> --human` or `--agent` overrides the mode for one run.
-- **Status** moves left to right:
-
-  | Status | Meaning |
-  |---|---|
-  | `todo` | Not started |
-  | `spec` | The spec is written and waits for your approval (gate 1) |
-  | `build` | Approved; being implemented and verified |
-  | `test` | Verified and reviewed; waits for you to test it (gate 2) |
-  | `done` | Set in the PR's last commit, so it becomes true when you merge |
+  `/task <id> --human` or `--agent` overrides the mode before the build starts.
+- **Status** goes `todo`, `spec`, `build`, `test` (agent mode only), `done`. What each status means and what you do at it: [workflow.md](workflow.md) section 3.
 
 - **Features** are the ids in [features.json](features.json) that the task makes pass. A task's spec may make a feature's check more precise, never weaker.
 - **Depends** lists the tasks that must be `done` first.

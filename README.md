@@ -48,7 +48,7 @@ docker compose -f compose.prod.yaml --env-file ops/rehearsal.env down
 ## Docs
 
 - [Product](docs/product.md): what Mieru does, for whom, and what is in the MVP
-- [Architecture](docs/architecture.md): the system design and its trade-offs
+- [Architecture](docs/architecture/README.md): the system design and its trade-offs
 - [Frontend](docs/frontend.md): the design of the React app
 - [Conventions](docs/conventions.md): layout, names, code style, testing, security
 - [Roadmap](docs/roadmap.md): what's being built now and next
