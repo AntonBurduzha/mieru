@@ -655,7 +655,7 @@ One `Caddyfile` in `ops/caddy/` describes both sites.
 - Cloudflare hosts DNS in DNS-only mode (trade-off 21).
 - DNS has A records only, no AAAA (trade-off 30).
 - Server layout: one `deploy` user with an SSH key, the `docker` group and passwordless sudo (trade-off 32). The repository is checked out at `/srv/mieru`, and the stack's variables live in `/srv/mieru/.env`, mode 600 (trade-off 33). `ops/bootstrap.sh` prepares a fresh server; `ops/README.md` is the runbook.
-- Secrets live in an `.env` file on the server, readable only by the deploy user, never in the repository. CI holds one SSH deploy key and a registry token.
+- Secrets live in an `.env` file on the server, readable only by the deploy user, never in the repository. CI holds one SSH deploy key, in the GitHub `production` environment, which only `main` can use. It needs no registry token on the server: the image on GHCR is public, and CI pushes it with the job's own `GITHUB_TOKEN`.
 
 **Deploy pipeline**
 
@@ -668,11 +668,15 @@ flowchart LR
     MIG --> ROLL["restart app containers<br/>one at a time,<br/>wait for healthy"]
 ```
 
-- **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, then restarts `ingest-2`. While one replica is down, Caddy's health checks take it out of the rotation and any request that fails to connect is retried on the other.
+- **Who triggers it.** CI's `deploy` job runs after `publish` on every push to `main`. It calls `.github/workflows/deploy.yml`, which can also be run by hand with any commit on `main` (trade-off 35). CI on `main` runs one at a time, so deploys happen in merge order.
+- **What the CI key can do.** It connects as `deploy`, and its line in `authorized_keys` forces `ops/deploy.sh` with `restrict`. The client's text is only the commit sha, and the script refuses anything but a full sha on `main` (trade-off 34).
+- **`ops/deploy.sh`.** Stage 1 takes a lock, checks the commit, pulls its image and detaches the checkout at it; a failure there changes nothing. Then it `exec`s the target commit's own copy for stage 2, so a commit that changes the deploy steps is deployed by those steps. Stage 2 runs the migrations, sets `MIERU_TAG` in `.env`, restarts the app containers one at a time, and reloads Caddy's config.
+- **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, waits 10 more seconds (longer than Caddy's `fail_duration` plus one health check interval, so Caddy routes to it again), then restarts `ingest-2`. While one replica is down, Caddy's health checks take it out of the rotation and any request that fails to connect is retried on the other. `api` has one replica, so the dashboard is unavailable for a few seconds while it restarts.
 - **Clean shutdown.** On SIGTERM `ingest` finishes in-flight requests and `writer` finishes and acknowledges its current batch.
 - **Failed migration** stops the deploy before any container restarts. Schema changes follow expand, migrate, contract so old and new code can overlap.
-- **Rollback** is a deploy of the previous image; images are tagged with the git commit.
-- **Database containers are not touched** by an app deploy.
+- **A failed deploy stops** where it failed and doesn't roll back by itself: the services it hadn't reached keep the old version (trade-off 36).
+- **Rollback** is a deploy of an earlier commit on `main`, with the same script: the checkout, the config and the image (tagged with the commit) go back together.
+- **Database containers and Caddy are not restarted** by an app deploy. A change to their service in `compose.prod.yaml` is applied by hand (`ops/README.md`).
 
 **Backups and restore**
 
@@ -778,7 +782,10 @@ Output: a results table and the bottlenecks found, in the README. The headline i
 | 30 | IPv6 for visitors | No AAAA records: visitors connect over IPv4 | `enable_ipv6` on the `edge` network with Docker's ip6tables, and AAAA records | Through Docker's userland proxy every IPv6 visitor reaches Caddy as the bridge gateway, so the daily hash would merge them all into one visitor. Cost: IPv6-only clients depend on their network's NAT64. Revisit in T26 |
 | 31 | Server OS | Ubuntu 26.04 LTS | Ubuntu 24.04 LTS; Debian 13 | Supported until 2031, and Docker publishes packages for it. Cost: `sudo-rs` and the Rust coreutils by default, younger than the GNU tools |
 | 32 | Server access | One `deploy` user: SSH key, `docker` group, passwordless sudo | An `admin` user with sudo and a `deploy` user with Docker only | Membership of the `docker` group already equals root, so a second user adds a login but no real boundary. T04 limits the CI key with a forced command instead |
-| 33 | Code on the server | A git checkout of `main` in `/srv/mieru`; `MIERU_TAG` is its commit | Copying `compose.prod.yaml` and `ops/` with `scp` or rsync | The config and the image always come from one commit, and a deploy is a `git pull` plus an image pull. Cost: the server needs read access to the repository, which is public today |
+| 33 | Code on the server | A git checkout of `main` in `/srv/mieru`; `MIERU_TAG` is its commit | Copying `compose.prod.yaml` and `ops/` with `scp` or rsync | The config and the image always come from one commit, and a deploy is a `git pull` plus an image pull. Cost: the server needs read access to the repository, which is public today. Since T04 the checkout is detached at the deployed commit, so a rollback is just another commit |
+| 34 | CI access to the server | One SSH key whose `authorized_keys` line forces `ops/deploy.sh` with `restrict`; the client sends only a sha | A second Unix user with Docker rights only; a pull-based agent on the server | A stolen key can redeploy a commit that is already on `main`, and nothing else. A second user with Docker equals root anyway (row 32). Cost: the script has to parse `SSH_ORIGINAL_COMMAND` strictly |
+| 35 | Deploy trigger | `deploy.yml` as a reusable workflow, called by CI after `publish` and runnable by hand | A `workflow_run` trigger on CI; a deploy job inside `ci.yml` only | One run shows test, publish and deploy, and CI's concurrency on `main` keeps merge order. `workflow_run` starts a separate run and makes it harder to know which commit was published. The manual trigger gives rollbacks the same steps |
+| 36 | Failed deploy | Stop and keep the rest on the old version; roll back by hand | Roll back automatically to the previous commit | Stopping keeps the evidence, and a second automatic deploy can fail the same way (a database down). Cost: someone has to look; until T25's uptime check, that means watching the Actions run |
 
 ---
 

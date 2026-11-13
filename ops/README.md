@@ -1,6 +1,6 @@
 # Operating the server
 
-How a fresh server becomes the running production stack. The design is in [architecture.md](../docs/architecture.md) section 11. Automated deploys replace step 6 in T04.
+How a fresh server becomes the running production stack, and how it is deployed and rolled back. The design is in [architecture.md](../docs/architecture.md) section 11.
 
 ## 1. Order the server
 
@@ -47,7 +47,9 @@ EOF
 
 Write it once. Postgres keeps the password it was first started with, so a new `POSTGRES_PASSWORD` locks the apps out. `noclobber` makes a second paste fail with "cannot overwrite existing file" instead of writing new passwords.
 
-## 6. Deploy by hand
+## 6. First start
+
+The first time only, the whole stack starts by hand:
 
 ```bash
 cd /srv/mieru
@@ -57,8 +59,73 @@ timeout 120 docker compose -f compose.prod.yaml logs -f caddy | grep -m1 'certif
 curl -s https://<domain>/api/v1/version          # the sha from step 5
 ```
 
-To update until T04: `git pull --ff-only`, set `MIERU_TAG` in `.env` to the new `git rev-parse HEAD`, then `up -d --wait` again.
+After that, every merge to `main` deploys itself (step 9). To deploy a commit by hand:
+
+```bash
+ssh deploy@<ip> /srv/mieru/ops/deploy.sh <full sha on main>
+```
+
+`deploy.sh` refuses a commit that isn't on `main`, a checkout with local changes, and a second deploy while one runs. It pulls the image, detaches the checkout at the commit, sets `MIERU_TAG` in `.env`, and restarts `ingest-1`, `ingest-2` and `api` one at a time, each ready before the next. The databases and `caddy` keep running; Caddy only reloads its config. The checkout stays detached at the deployed commit, so `git -C /srv/mieru rev-parse HEAD` names what runs.
 
 ## 7. After a reboot
 
 Docker starts on boot and every service has `restart: unless-stopped`, so the stack comes back by itself. Check it with `docker compose -f compose.prod.yaml ps`: every service is `healthy`.
+
+## 8. The CI deploy key
+
+CI connects with its own key, which can run `ops/deploy.sh` and nothing else. On the Mac:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C mieru-ci-deploy -f ~/.ssh/mieru_ci_deploy
+pub=$(cat ~/.ssh/mieru_ci_deploy.pub)
+ssh deploy@<ip> "echo 'restrict,command=\"/srv/mieru/ops/deploy.sh\" $pub' >> ~/.ssh/authorized_keys"
+```
+
+- `command=` makes sshd run the script whatever the client asks for; the client's text reaches it as `SSH_ORIGINAL_COMMAND` and must be a single sha. `restrict` turns off forwarding and the terminal.
+- Your own key stays unrestricted, on its own line.
+- To replace the key: delete its line in `~/.ssh/authorized_keys` on the server, then repeat this step and step 9's secret.
+
+## 9. The GitHub `production` environment
+
+Settings -> Environments -> New environment `production`:
+
+- Deployment branches and tags: "Selected branches and tags", rule `main`.
+- No required reviewers: a merge deploys by itself.
+- Secret `DEPLOY_SSH_KEY`: `gh secret set DEPLOY_SSH_KEY --env production < ~/.ssh/mieru_ci_deploy`
+- Variables:
+  - `DEPLOY_HOST`: the server's IPv4.
+  - `MIERU_DOMAIN`: the dashboard's host name.
+  - `DEPLOY_KNOWN_HOSTS`: the server's host key, so CI never trusts a key on first use. Take it with `ssh-keyscan -t ed25519 <ip>`, and check that its fingerprint (`ssh-keygen -lf <(ssh-keyscan -t ed25519 <ip>)`) matches the one the server prints: `ssh deploy@<ip> ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+
+```bash
+gh variable set DEPLOY_HOST --env production --body <ip>
+gh variable set MIERU_DOMAIN --env production --body <domain>
+gh variable set DEPLOY_KNOWN_HOSTS --env production --body "$(ssh-keyscan -t ed25519 <ip> 2>/dev/null)"
+```
+
+From then on, CI's `deploy` job runs after `publish` on every push to `main`. It ends by checking from outside that `https://<domain>/api/v1/version` and `https://in.<domain>/version` report the commit.
+
+Once T04's checks of the key are done (criteria 4 and 8), delete the local private key with `rm ~/.ssh/mieru_ci_deploy`. The secret is the only copy CI needs, and a new key is cheap.
+
+## 10. Roll back
+
+A rollback is a deploy of an earlier commit on `main`; the checkout, `compose.prod.yaml`, the Caddyfile and the image all go back together.
+
+- From GitHub: Actions -> Deploy -> Run workflow, branch `main`, with the commit's full sha. `git log --first-parent --format='%H %s' origin/main` lists the candidates.
+- By hand: `ssh deploy@<ip> /srv/mieru/ops/deploy.sh <sha>`.
+
+Migrations follow expand, migrate, contract, so the previous image still works with the newer schema. A commit from before T04 has no `ops/deploy.sh`. The CI key refuses it, because it would lock CI out, so roll back to it by hand only. The server then has no `deploy.sh` either, so deploy the next commit from a local checkout at T04 or later, which pipes its copy of the script:
+
+```bash
+ssh deploy@<ip> 'bash -s -- <newer sha>' < ops/deploy.sh
+```
+
+A failed deploy stops where it failed: the services it hadn't reached keep the old version. Read its output in the Actions log, then either fix forward with a new commit or roll back.
+
+## 11. Changes that deploy.sh doesn't apply
+
+`deploy.sh` restarts only the app services. When a commit changes the `caddy`, `postgres`, `redis` or `clickhouse` service in `compose.prod.yaml` (an image version, a volume, a limit), apply it by hand after the deploy, when a short outage of that service is fine:
+
+```bash
+cd /srv/mieru && docker compose -f compose.prod.yaml up -d --wait <service>
+```

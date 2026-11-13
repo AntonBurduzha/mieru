@@ -1,0 +1,72 @@
+name: Deploy
+
+# Called by CI once the image of a main commit is published. Also run by hand
+# (Actions -> Deploy -> Run workflow) to roll back or redeploy any commit on main.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: Full commit sha on main
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit sha on main (40 characters)
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Holds DEPLOY_SSH_KEY and the variables below. Only main may deploy to it
+    environment:
+      name: production
+      url: https://${{ vars.MIERU_DOMAIN }}
+    # One deploy at a time; a new one waits instead of cancelling the running one
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    # Inputs and variables reach the scripts only as environment variables
+    env:
+      SHA: ${{ inputs.sha }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      MIERU_DOMAIN: ${{ vars.MIERU_DOMAIN }}
+    steps:
+      - name: Check the sha
+        run: |
+          if [[ ! $SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full 40-character commit sha"
+            exit 1
+          fi
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          key="$RUNNER_TEMP/deploy_key"
+          hosts="$RUNNER_TEMP/known_hosts"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$DEPLOY_SSH_KEY" >"$key" && printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >"$hosts")
+          # The key's forced command runs ops/deploy.sh on the server; the sha is all it gets.
+          # StrictHostKeyChecking with the pinned host key: no trust on first use
+          ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts" \
+            -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+            "deploy@$DEPLOY_HOST" "$SHA"
+
+      - name: Check from outside
+        run: |
+          want="{\"version\":\"$SHA\"}"
+          for url in "https://$MIERU_DOMAIN/api/v1/version" "https://in.$MIERU_DOMAIN/version"; do
+            got=$(curl -fsS --retry 10 --retry-delay 3 --retry-all-errors --max-time 10 "$url")
+            if [[ $got != "$want" ]]; then
+              echo "::error::$url answered $got, expected $want"
+              exit 1
+            fi
+            echo "$url: $got"
+          done

@@ -20,7 +20,8 @@ mieru/
 ├── compose.prod.yaml         # the server: caddy, apps, databases
 ├── .env.example              # every backend setting, with a comment
 ├── .github/
-│   ├── workflows/ci.yml      # lint, types, tests; image push on main
+│   ├── workflows/ci.yml      # lint, types, tests; image push and deploy on main
+│   ├── workflows/deploy.yml  # SSH to the server and run ops/deploy.sh; by hand for a rollback
 │   └── pull_request_template.md
 ├── .claude/                  # shared Claude Code setup (public)
 │   ├── settings.json         # permissions and hooks
@@ -44,7 +45,7 @@ mieru/
 │   ├── rehearsal.env         # dummy values for running compose.prod.yaml on a Mac
 │   ├── server.env.example    # names of the variables in the server's .env
 │   ├── bootstrap.sh          # fresh Ubuntu server, ready for deploys
-│   ├── deploy.sh             # (later) pull, migrate, rolling restart
+│   ├── deploy.sh             # one commit of main: pull, migrate, rolling restart
 │   ├── backup/               # (later) pg_dump and ClickHouse backup scripts, restore-check.sh
 │   └── drills/               # (later) scripts run against the server, e.g. deploy-under-traffic.sh
 └── apps/
