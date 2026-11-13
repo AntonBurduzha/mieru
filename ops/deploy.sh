@@ -24,6 +24,8 @@ readonly APP_SERVICES=(ingest-1:8001 ingest-2:8001 api:8000)
 # the rotation (ops/caddy/Caddyfile)
 readonly SETTLE_SECONDS=10
 readonly READY_SECONDS=30
+readonly FETCH_SECONDS=120
+readonly PULL_SECONDS=600
 
 SHA=
 
@@ -62,7 +64,10 @@ sync_checkout() {
   [[ -z $(git status --porcelain) ]] || die "the checkout in $APP_DIR has local changes"
 
   log "Checking $SHA"
-  git fetch --quiet origin main
+  # The timeouts keep a stalled GitHub or GHCR from holding the lock after CI gives up.
+  # 9>&- closes the lock for git: fetch can start a background gc that outlives it
+  timeout "$FETCH_SECONDS" git fetch --quiet origin main 9>&- \
+    || die "git fetch failed or took over ${FETCH_SECONDS}s"
   git merge-base --is-ancestor "$SHA" origin/main 2>/dev/null || die "$SHA is not a commit on main"
   # The forced command runs $APP_DIR/ops/deploy.sh: a commit without it would leave
   # the CI key unable to deploy anything afterwards
@@ -72,7 +77,9 @@ sync_checkout() {
 
   log "Pulling the image"
   # One image serves every app service; a commit CI hasn't published fails here
-  MIERU_TAG=$SHA compose pull --quiet api || die "no image for $SHA: has CI published it?"
+  # timeout can't run a shell function, so this spells out compose()
+  MIERU_TAG=$SHA timeout "$PULL_SECONDS" docker compose -f compose.prod.yaml pull --quiet api \
+    || die "no image for $SHA within ${PULL_SECONDS}s: has CI published it?"
 
   log "Moving the checkout to $SHA"
   git checkout --quiet --detach "$SHA"
