@@ -11,10 +11,10 @@
 | | |
 |---|---|
 | **Current** | |
-| **Next** | T03 Server bootstrap and first manual deploy (human) |
-| **Waiting on** | The developer commits [T02](tasks/T02-prod-compose-caddy.md) with `/commit`, pushes and opens the PR |
-| **Open questions** | Which server can actually be ordered ([architecture.md](architecture.md) section 11): T03 decides. The production domain name: T02 takes it from a variable and rehearses on `localhost`, so T03 decides. IPv6 visitors reach Caddy through docker-proxy as the bridge gateway (T02 review finding 3): T03 enables IPv6 on `edge` or publishes no AAAA record |
-| **Updated** | 2026-11-12 |
+| **Next** | T04 Automated deploy (agent) |
+| **Waiting on** | The developer commits, pushes and merges [T03](tasks/T03-server-bootstrap-deploy.md) |
+| **Open questions** | IPv6: T03 publishes no AAAA record, so every visitor connects over IPv4; IPv6 on `edge` waits for T26 |
+| **Updated** | 2026-11-13 |
 
 ---
 
@@ -49,7 +49,7 @@
 |---|---|---|---|---|---|
 | T01 | **Config and startup hardening.** Settings safe by default: an unset `ENV` must not show error details or send cookies without `Secure`. The `.env` path doesn't depend on the working directory. `session_ttl_days` accepts 1. The crash-test flag is refused in prod. Database URLs are secret. No local variables in local tracebacks. Apps are built by `uvicorn --factory`, not at import time. The api starts when ClickHouse is down and reports it in `/health/ready`. Also: the `DTZ` lint rule, mypy on tests, a coverage report, ruff check before format in pre-commit, and the image built (not pushed) on every PR | agent | | | done |
 | T02 | **Production compose, Caddy and TLS, rehearsed locally.** `compose.prod.yaml`, the Caddyfile (routing, active and passive health checks and retries, `X-Real-IP`, the log filter, no ingest access log, headers), memory limits. The whole stack runs on the Mac with Caddy's local certificates | human | | T01 | done |
-| T03 | **Server bootstrap and first manual deploy.** Order the server, `ops/bootstrap.sh` (user, SSH, updates, Docker), provider firewall, DNS in Cloudflare (DNS only), the real domain (Caddy gets its certificates), the first deploy by hand | human | | T02 | todo |
+| T03 | **Server bootstrap and first manual deploy.** Order the server, `ops/bootstrap.sh` (user, SSH, updates, Docker), provider firewall, DNS in Cloudflare (DNS only), the real domain (Caddy gets its certificates), the first deploy by hand | human | | T02 | done |
 | T04 | **Automated deploy.** `ops/deploy.sh` (pull, migrate, restart ingest replicas one at a time), a CI deploy key that can only run `deploy.sh`, `deploy.yml` with the `production` environment, and a rollback drill | agent | | T03 | todo |
 
 ## M1: First page view, end to end

@@ -38,9 +38,12 @@ mieru/
 │   ├── tasks/                # T07-sites-api.md ... task specs (public)
 │   └── learn/                # human-mode tutorials (gitignored)
 ├── ops/
+│   ├── README.md             # runbook: a fresh server to a running stack
 │   ├── clickhouse/           # low-memory.xml, users.xml
 │   ├── caddy/                # Caddyfile: both sites, TLS, routing, headers, log filters
-│   ├── bootstrap.sh          # (later) fresh server, ready for deploys
+│   ├── rehearsal.env         # dummy values for running compose.prod.yaml on a Mac
+│   ├── server.env.example    # names of the variables in the server's .env
+│   ├── bootstrap.sh          # fresh Ubuntu server, ready for deploys
 │   ├── deploy.sh             # (later) pull, migrate, rolling restart
 │   ├── backup/               # (later) pg_dump and ClickHouse backup scripts, restore-check.sh
 │   └── drills/               # (later) scripts run against the server, e.g. deploy-under-traffic.sh
