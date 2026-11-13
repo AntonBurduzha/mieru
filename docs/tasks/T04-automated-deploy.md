@@ -2,7 +2,7 @@
 id: T04
 title: Automated deploy
 mode: agent
-status: test
+status: done
 features: []
 depends: [T03]
 branch: t04-automated-deploy
@@ -162,29 +162,29 @@ Expected: every command exits 0. Neither the server's address nor the domain app
    - Then delete `~/.ssh/mieru_ci_deploy`.
 
 ## Where to debug
-Shell and CI, not Python: no breakpoints. To trace the script, run it with `bash -x`. On the server: `ssh deploy@$MIERU_HOST 'bash -x /srv/mieru/ops/deploy.sh <sha>'`. Before the merge, use `ssh deploy@$MIERU_HOST 'bash -x -s -- <sha>' < ops/deploy.sh`. Line numbers are as of the build, uncommitted.
+Shell and CI, not Python: no breakpoints. To trace the script, run it with `bash -x`. On the server: `ssh deploy@$MIERU_HOST 'bash -x /srv/mieru/ops/deploy.sh <sha>'`. Before the merge, use `ssh deploy@$MIERU_HOST 'bash -x -s -- <sha>' < ops/deploy.sh`. Line numbers are as of the follow-up `t04-deploy-hardening`.
 
-1. **Which commits are refused**: `ops/deploy.sh:66` (`sync_checkout`), plus line 69 for the forced command only.
-   - Why here: `merge-base --is-ancestor` decides whether a sha counts as "on main" after the fetch on line 65. A stale `origin/main` refuses a commit that was just merged, and the error says "is not a commit on main".
+1. **Which commits are refused**: `ops/deploy.sh:71` (`sync_checkout`), plus line 74 for the forced command only.
+   - Why here: `merge-base --is-ancestor` decides whether a sha counts as "on main" after the fetch on line 69. A stale `origin/main` refuses a commit that was just merged, and the error says "is not a commit on main".
    - Trigger: criterion 3 (the all-`f` sha), or a deploy right after a merge.
    - Look at: `git -C /srv/mieru log -1 --format=%H origin/main` equals the merge commit. `git -C /srv/mieru config --get remote.origin.fetch` is `+refs/heads/*:refs/remotes/origin/*`.
-2. **What the CI key's text becomes**: `ops/deploy.sh:45` (`parse_sha`), with the check on line 51.
+2. **What the CI key's text becomes**: `ops/deploy.sh:47` (`parse_sha`), with the check on line 53.
    - Why here: under the forced command, the sha is the whole of `SSH_ORIGINAL_COMMAND`, not `$1`. Anything but exactly 40 lowercase hex characters (a second word, a second line) exits 2 with the usage line. A CI run that fails with "usage:" sent something else: an empty input, or a short sha.
    - Trigger: after the merge, `ssh -i ~/.ssh/mieru_ci_deploy deploy@$MIERU_HOST 'x;id'` (criterion 8). Before the merge, the server has no script, so the same command gives exit 127.
    - Look at: in `bash -x` output, `arg` is the 40-hex sha.
-3. **Handing over to the target's copy**: `ops/deploy.sh:81` (`sync_checkout`).
+3. **Handing over to the target's copy**: `ops/deploy.sh:88` (`sync_checkout`).
    - Why here: after the checkout, stage 2 runs from the target commit's `ops/deploy.sh`, with `MIERU_DEPLOY_STAGE=apply`. A bug that shows only in the new copy appears after this line. A deploy that runs stage 1 twice means the variable didn't reach the new process.
    - Trigger: any deploy of a commit that has `ops/deploy.sh` (every deploy after the merge).
    - Look at: the log shows "Moving the checkout" once, then "Migrations: none yet". The lock file `/srv/mieru/.git/mieru-deploy.lock` is held until the end: `fuser /srv/mieru/.git/mieru-deploy.lock` during a deploy.
-4. **The rolling restart**: `ops/deploy.sh:122` (`restart`), the readiness poll on line 109, and the settle pause on line 141.
-   - Why here: `up --force-recreate --wait` replaces one container. Lines 124-125 check its image tag. `wait_ready` polls `/health/ready` inside it for 30 s. A failure stops the deploy with the service's name. A non-200 during criterion 5 means the pause on line 141 is too short for Caddy's `fail_duration` and `health_interval`.
+4. **The rolling restart**: `ops/deploy.sh:129` (`restart`), the readiness poll on line 116, and the settle pause on line 148.
+   - Why here: `up --force-recreate --wait` replaces one container. Lines 131-132 check its image tag. `wait_ready` polls `/health/ready` inside it for 30 s. A failure stops the deploy with the service's name. A non-200 during criterion 5 means the pause on line 148 is too short for Caddy's `fail_duration` and `health_interval`.
    - Trigger: criterion 5.
    - Look at: `docker compose -f compose.prod.yaml ps` shows the new container `healthy`. `docker compose -f compose.prod.yaml logs --since 2m ingest-1` shows the startup. The curl loop's file holds only `200`.
-5. **The CI side**: `.github/workflows/deploy.yml:57` (the ssh call), and the outside check on lines 65-67.
+5. **The CI side**: `.github/workflows/deploy.yml:65` (the ssh call), and the outside check on lines 72-77.
    - Why here:
      - "Host key verification failed" means `DEPLOY_KNOWN_HOSTS` is wrong or missing.
      - "Permission denied (publickey)" means the secret doesn't match the `authorized_keys` line.
-     - A version mismatch on line 67 means a replica still runs the old image.
+     - A version mismatch on line 75 means a replica still runs the old image.
    - Trigger: the CI run of a merge to `main`, or Actions -> Deploy -> Run workflow.
    - Look at: the job log of "Deploy over SSH" (the script's `==>` lines) and of "Check from outside".
 
@@ -241,3 +241,14 @@ The first pass found one deviation: a two-line `SSH_ORIGINAL_COMMAND` got past p
 12. Nit (optional): edits outside the named sections. `architecture.md` changes the "Network and access" secrets bullet and adds a sentence to row 33; row 33 still says "a deploy is a `git pull`". `ops/README.md` changes its intro.
 
 **Fix after the merge, 2026-11-13:** criterion 8 failed. All three attempts of the `deploy` job in CI run 43480887060 (merge commit `771a99f`) stopped before reaching the server: `Load key ".../deploy_key": error in libcrypto`, then `Permission denied (publickey)`, exit 255. The job log shows the `production` variables set but `DEPLOY_SSH_KEY` empty. The spec assumed the called job's `environment:` was enough. GitHub's docs say otherwise: "The caller workflow must still pass the secret… You can pass a secret by name even if it only exists in the environment." Fix on branch `t04-deploy-secret`: `ci.yml` passes `DEPLOY_SSH_KEY` by name, `deploy.yml` declares it under `workflow_call.secrets`, and the deploy step fails with a clear message when the key is empty. A rerun of the old run can't pick this up, because it uses the old workflow files, so criterion 8 is proved by the fix's own merge commit.
+
+**Criterion 8, 2026-11-13: passed** on the fix's own merge commit `3e9f4f2` (PR #11). CI run 43483193930: `backend`, `image`, `publish` and `deploy / deploy` all `success`. The deploy job reached the server through the CI key's forced command and logged `Checking`, `Pulling the image`, `Moving the checkout`, `Migrations: none yet`, `Restarting ingest-1`, the 10 s settle, `ingest-2`, `api`, `Reloading Caddy's config`, `Deployed 3e9f4f2…`. Its outside check got `{"version":"3e9f4f2…"}` from both hosts. The developer confirmed criteria 3-7 and their own test at gate 2.
+
+**Optional findings, applied in the follow-up `t04-deploy-hardening`:**
+- #3: `git fetch` runs under `timeout 120`, `compose pull` under `timeout 600`, each with its own error message.
+- #8: `git fetch` runs with fd 9 closed, so a background gc it starts can't keep the deploy lock.
+- #12: `docs/architecture.md` row 33 no longer says a deploy is a `git pull`.
+
+Left as they are: #7 (`mktemp` already creates the file with mode 600), #9 (with `set -e`, a failed reload already exits non-zero; only the message is missing), #10 (the key line is installed once). The debug map was renumbered for the new lines.
+
+**Final verification, 2026-11-13: DONE.** Criteria 1 and 2 re-run on this branch (shellcheck and actionlint, exit 0). `parse_sha` exits 2 for every malformed input under bash 3.2 and 5.2, both as an argument and through `SSH_ORIGINAL_COMMAND`. Every debug-map reference matches the files, and no server address or domain is in a tracked file. Criteria 3-7 and 8's `'x;id'` check (exit 2 through the CI key, run before the key was deleted) were confirmed by the developer. Criterion 8's deploy is CI run 43483193930. The new `timeout` lines in stage 1 first run on the deploy of this follow-up's merge.
