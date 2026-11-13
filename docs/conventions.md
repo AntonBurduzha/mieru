@@ -1,7 +1,7 @@
 # Mieru: conventions
 
 > The rules every task follows: where files live, what things are called, how code is layered, how it is tested, and the security and privacy rules. This is the one place for them. If another doc or a task spec disagrees, this file wins, and the other one gets fixed.
-> *What* Mieru does: [product.md](product.md). *How* it works: [architecture.md](architecture.md). The React app: [frontend.md](frontend.md). How a task runs: [workflow.md](workflow.md).
+> *What* Mieru does: [product.md](product.md). *How* it works: [architecture/](architecture/README.md). The React app: [frontend.md](frontend.md). How a task runs: [workflow.md](workflow.md).
 
 ---
 
@@ -27,10 +27,10 @@ mieru/
 │   ├── settings.json         # permissions and hooks
 │   ├── hooks/                # format.sh, protect.sh
 │   ├── agents/               # test-writer, verifier, reviewer
-│   └── skills/               # task, verify, status
+│   └── skills/               # task, verify, status, commit
 ├── docs/
 │   ├── product.md            # problem, users, stories and acceptance criteria, scope
-│   ├── architecture.md       # system design and trade-offs
+│   ├── architecture/         # system design: README.md maps one file per topic; decisions.md
 │   ├── frontend.md           # design of the React app
 │   ├── conventions.md        # this file
 │   ├── roadmap.md            # the "Now" block and the task list
@@ -101,7 +101,7 @@ mieru/
 
 **Public and private.** The repository is public. Everything in it is project material, including the agent setup in `.claude/` and the task specs. Only `docs/learn/`, `.claude/skills/task/human.md`, `CLAUDE.local.md` and `.claude/settings.local.json` are private and gitignored. Public files never link to private ones.
 
-**Decisions** go in [architecture.md](architecture.md) section 13 as a table row. A decision that needs more than a row gets an ADR in `docs/adr/NNNN-<slug>.md` with four parts: Context, Decision, Alternatives, Consequences.
+**Decisions** go in [architecture/decisions.md](architecture/decisions.md) as a new row with the next number. Each file in `docs/architecture/` stays under about 250 lines and describes design (what and why); step-by-step how-to goes to `ops/README.md` or to comments in the config. A decision that needs more than a row gets an ADR in `docs/adr/NNNN-<slug>.md` with four parts: Context, Decision, Alternatives, Consequences.
 
 ---
 
@@ -164,7 +164,7 @@ flowchart LR
 | ClickHouse tables | `events`, `sessions`, `sessions_mv`, `schema_migrations` |
 | ClickHouse read-only user for stats | `mieru_reader`, in `ops/clickhouse/users.xml` |
 | Redis stream / consumer group / consumer | `events` / `writers` / `writer-1` |
-| Redis keys | [architecture.md](architecture.md) section 7.3, plus `auth:{token_hash}` (session lookup cache, 60 s), `sites:version` (site cache invalidation) and `rl:login:{sha256(ip)[:16]}:{minute}` (5 logins a minute) |
+| Redis keys | [architecture/data-model.md](architecture/data-model.md) "Redis keys", plus `auth:{token_hash}` (session lookup cache, 60 s), `sites:version` (site cache invalidation) and `rl:login:{sha256(ip)[:16]}:{minute}` (5 logins a minute) |
 | Redis database for tests | 15 |
 | Drop reasons (header `X-Mieru-Dropped`, log and metric label) | `unknown_site`, `blocked`, `over_quota`, `bot`, `spam_referrer`, `rate_limited`, `backpressure`, `redis_unavailable` |
 | Session cookie | `mieru_session` |
@@ -215,7 +215,7 @@ Task ids (`T01`) and feature ids (`T1`, tracking) are different things: a task b
 
 Fixed here so that tasks written weeks apart fit together. Specs use these names.
 
-**Ingest body:** [architecture.md](architecture.md) section 9.
+**Ingest body:** [architecture/api.md](architecture/api.md).
 
 **Stream entry** (written by `ingest`, read by `writer`): fields `v` (format version), `site_id`, `org_id`, `ts` (ms), `n`, `u`, `r`, `ua`, `vid`, `pvid` (yesterday's visitor id), `cc` (country), `p` (props as JSON). A contract test builds an entry with the real ingest code and reads it with the real writer code (section 6).
 
@@ -464,14 +464,14 @@ A site or object the user can't access returns `404`, never `403`, so ids can't 
 **Dependencies**
 
 - Lockfiles are committed. GitHub Actions are pinned to a version or a commit SHA.
-- Dependabot opens update PRs (`.github/dependabot.yml`): security fixes as soon as an advisory appears, and a weekly grouped PR for minor and patch versions of the backend packages and the Actions. Major versions come as separate PRs and are planned as tasks. Every merge to `main` deploys, so these PRs are merged by hand after CI passes.
+- Dependabot opens one PR a month (`.github/dependabot.yml`) that updates the backend packages, the Actions and the base image together, major versions included, with no labels. If a major bump breaks CI, it is dropped from that PR or planned as a task. Security alerts are on, but security-update PRs are off in the repository settings: an advisory shows in the Security tab and is fixed by the next monthly PR, or by hand if it can't wait. Every merge to `main` deploys, so the PR is merged by hand after CI passes.
 - In the security pass, CI gains `pip-audit`, `pnpm audit --prod`, Trivy on the images and `gitleaks`, each failing on high severity.
 - A new dependency is reviewed in its PR: is it maintained, how big is it, what does it pull in? Prefer the standard library for small things.
 - Mieru never fetches a URL a user supplied. The "is it installed?" check queries ClickHouse, not the site.
 
 ### 7.6 Privacy guarantees and the privacy test
 
-**Guarantees** (design: [architecture.md](architecture.md) section 6)
+**Guarantees** (design: [architecture/privacy.md](architecture/privacy.md))
 
 1. The raw IP is used inside `ingest` for one request. It is never written to Redis, ClickHouse, Postgres, logs or traces.
 2. The tracker sets no cookies and writes nothing to browser storage.

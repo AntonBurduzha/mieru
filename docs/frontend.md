@@ -1,6 +1,6 @@
 # Mieru: frontend
 
-> The design of the dashboard app: how it is built, served, structured and tested, and the quality bar it must meet. The backend it talks to is in [architecture.md](architecture.md); folder layout, names and code style are in [conventions.md](conventions.md) sections 1 and 4.
+> The design of the dashboard app: how it is built, served, structured and tested, and the quality bar it must meet. The backend it talks to is in [architecture/](architecture/README.md); folder layout, names and code style are in [conventions.md](conventions.md) sections 1 and 4.
 
 ---
 
@@ -108,7 +108,7 @@ A pathless layout route `_app` wraps every logged-in page: it checks the session
 
 ## 5. Auth flow
 
-The session is an `HttpOnly` cookie that JavaScript never sees (design: [architecture.md](architecture.md) section 9). The app only ever asks the API "who am I?".
+The session is an `HttpOnly` cookie that JavaScript never sees (design: [architecture/api.md](architecture/api.md), "Auth model"). The app only ever asks the API "who am I?".
 
 ```mermaid
 sequenceDiagram

@@ -5,16 +5,12 @@ Monorepo: `apps/backend` (Python 3.13, uv, FastAPI, package `mieru` under `src/`
 
 ## Docs: read the one the work needs
 - `docs/product.md`: what Mieru does and for whom; stories with acceptance criteria; MVP scope.
-- `docs/architecture.md`: the system design. Section 13 holds the decisions.
+- `docs/architecture/`: the system design, one file per topic. `README.md` maps them; `decisions.md` holds the decisions. Read only the files the spec names.
 - `docs/frontend.md`: the design of the React app.
 - `docs/conventions.md`: layout, names, code style, tests, security. It wins when docs disagree.
-- `docs/roadmap.md`: the "Now" block and the task list.
-- `docs/workflow.md`: how a task runs (`/task`, `/verify`, `/status`).
+- `docs/roadmap.md`: the "Now" block and the task list. What's built: the `done` tasks and "Done before the replan".
+- `docs/workflow.md`: the developer's guide to the workflow. Agents follow the skills in `.claude/skills/` instead.
 - `docs/features.json`: one entry per feature, with the command that proves it.
-
-## State today
-Built: the `api` and `ingest` apps with `/health`, `/health/ready` and version endpoints; settings; JSON logs with request ids; the error handler; local Compose; CI against real databases; the image pushed to GHCR from `main`.
-Not built yet: Postgres models, auth, the ingest pipeline, writer, worker, web app, tracker, the server.
 
 ## Rules that never bend
 - Layers: `api/routes -> services -> repositories -> models`. Routes never touch SQL.
@@ -28,8 +24,13 @@ Not built yet: Postgres models, auth, the ingest pipeline, writer, worker, web a
 - Public files never link to private ones (`docs/learn/`, `CLAUDE.local.md`).
 
 ## Working on a task
-Each task has a spec in `docs/tasks/T<NN>-<slug>.md`. Edit only the files the spec allows, write the tests first, run the proof-of-done commands and show their output. Never push; the developer pushes and opens the PR. Details: `docs/workflow.md`.
-The developer is the only author: commits and PR descriptions carry no `Co-Authored-By` trailer and no "Generated with Claude Code" line.
+A task runs through `/task` in two runs. Run 1 writes the spec in `docs/tasks/T<NN>-<slug>.md`, gets it approved, then builds it (agent mode) or writes the private tutorial (human mode). Run 2, after the developer's test, checks, fixes and makes the task's one commit.
+- Edit only the files the spec allows. Tests come first.
+- The spec is committed when it's approved. Nothing else is committed until run 2.
+- Markdown docs are Claude's job in both modes. The developer never edits docs or commits by hand.
+- Work outside a task stays uncommitted. The developer reviews it in Cursor and runs `/commit`, which makes one commit, and amends it until the push.
+- Never push. The developer pushes and opens the PR.
+- The developer is the only author: commits and PR descriptions carry no `Co-Authored-By` trailer and no "Generated with Claude Code" line.
 
 ## Commands
 From `apps/backend`:

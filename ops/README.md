@@ -1,6 +1,6 @@
 # Operating the server
 
-How a fresh server becomes the running production stack, and how it is deployed and rolled back. The design is in [architecture.md](../docs/architecture.md) section 11.
+How a fresh server becomes the running production stack, and how it is deployed and rolled back. The design is in [deployment.md](../docs/architecture/deployment.md).
 
 ## 1. Order the server
 
@@ -25,7 +25,7 @@ The script upgrades packages, turns on security updates, and installs Docker fro
 
 ## 4. DNS
 
-In Cloudflare, add two A records to the server's IPv4: `<domain>` and `in.<domain>`. Proxy status: DNS only. No AAAA records: over IPv6, Docker's proxy would hide every visitor's address behind the bridge gateway (architecture.md, trade-off 30).
+In Cloudflare, add two A records to the server's IPv4: `<domain>` and `in.<domain>`. Proxy status: DNS only. No AAAA records: over IPv6, Docker's proxy would hide every visitor's address behind the bridge gateway ([decision 30](../docs/architecture/decisions.md)).
 Check: `dig +short A in.<domain> @1.1.1.1` prints the server's IPv4.
 
 ## 5. The server's `.env`

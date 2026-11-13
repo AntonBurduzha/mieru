@@ -8,26 +8,33 @@ depends: []            # task ids, e.g. [T05]
 branch: t<nn>-<slug>
 ---
 
+<!-- Keep the spec under 150 lines, plus at most about 30 for Review. It is public: write it in English, with no links to private files. -->
+
 # T<NN> <title>
 
 ## Goal
 One or two sentences: what works afterwards that didn't before, and for whom.
 
 ## Context to read
-- `docs/architecture.md` section N: why it matters for this task
+- `docs/architecture/<topic>.md` (a heading, or `decisions.md` row N): why it matters for this task
 - `docs/conventions.md` section N
 - Code that shows the pattern to follow: `path/to/file.py:12`
 
 ## Scope
-- **In:** the behaviour this task adds or changes
-- **Out:** what a reader might expect here but is left for later (name the task that does it)
-- **Files allowed to change:** exact paths or narrow globs, tests included. The spec, `docs/roadmap.md` and `docs/features.json` are always allowed
+- **In:** the behaviour this task adds or changes.
+- **Out:** what a reader might expect here but is left for later. Name the task that does it.
+- **Files allowed to change:**
+  - Exact paths or narrow globs, including the tests and every doc this task updates.
+  - The spec, `docs/roadmap.md` and `docs/features.json` are always allowed.
+  - In human mode the developer writes the code and Claude writes the Markdown docs.
 
 ## Interfaces
-Exact names and shapes other code relies on: function signatures, endpoints with request and response bodies, settings, Redis keys, table columns, component props. Names come from `docs/conventions.md` section 5 when they exist there.
+Exact names and shapes that other code relies on: function signatures, endpoints with their request and response bodies, settings, Redis keys, table columns, component props. Take the names from `docs/conventions.md` section 5 when they exist there.
 
 ## Acceptance criteria
-Each criterion is observable and ends with how it is proven: `auto:` a command that exits 0 only when the criterion holds, or `human:` steps a person follows.
+Each criterion is observable and ends with how it is proven:
+- `auto:` a command that exits 0 only when the criterion holds;
+- `human:` steps a person follows.
 
 1. Given ..., when ..., then ... (auto: `uv run --directory apps/backend pytest tests/unit/core/test_config.py -k unset_env`)
 2. ... (human: run X, open Y, expect Z)
@@ -37,35 +44,40 @@ Each criterion is observable and ends with how it is proven: `auto:` a command t
 - ...
 
 ## Proof of done
-Commands run from the repo root, each with the output that proves it. The verifier runs all of them.
+The verifier always runs:
+- the standard checks for every app the diff touches (lint, format, types, the full test suite);
+- every `auto:` command;
+- the feature checks;
+- the scope and test-integrity checks.
 
-```bash
-uv run --directory apps/backend ruff check . && uv run --directory apps/backend ruff format --check .
-uv run --directory apps/backend mypy src tests
-uv run --directory apps/backend pytest            # needs `docker compose up -d`
-```
-
-Expected: every command exits 0; pytest reports no failures and no skips added by this task.
+List here only what else proves this task, as commands run from the repo root, each with the output that proves it. If nothing else is needed, write "Nothing beyond the standard checks."
 
 ## Test it yourself
-Up to five steps for the developer at gate 2, with what to see. Prefer the real app over tests: a `curl`, a page, a log line.
+Up to five steps for the developer to follow before run 2, each with what they should see. Prefer the real app over tests: a `curl`, a page, a log line.
 
 ## Where to debug
-Filled in after the build by whoever implemented it; line numbers are as of the last commit. Three to five places where this task's behaviour is decided, the one most likely to break first. Pick from:
-- input boundaries (validation, parsing);
-- branches that choose behaviour (env, flags, error paths);
-- I/O adapters (Postgres, Redis, ClickHouse calls);
-- concurrency (locks, lifespans, retries).
+Written once, just before the developer's test, from the code on disk. List three to five places where this task's behaviour is decided, the riskiest first:
+- input boundaries;
+- branches that choose behaviour;
+- I/O adapters;
+- concurrency.
 
-Skip trivial glue. Each trigger must really reach the line. How to run the debugger: `docs/workflow.md` section 12.
+Skip trivial glue. Each trigger must really reach the line. How to use the debugger: `docs/workflow.md`, "Debugging".
 
-1. **<what this place decides>**: `apps/backend/src/mieru/<module>.py:<line>` (`<function>`)
-   - Why here: what it decides, and how a bug here shows up from the outside.
-   - Stop there: a breakpoint on line `<line>`, the Cursor config `<api | ingest | pytest: -k>`, then `<curl, page or test that reaches it>`. Terminal: `uv run --directory apps/backend pytest <test path> -k <name> --pdb`
-   - Look at: the variables to inspect and the values you expect.
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| <one phrase> | `apps/backend/src/mieru/<module>.py:<line>` (`<function>`) | the Cursor config `<api / ingest / pytest: -k>` and `<a curl, page or test>` | the values to inspect and what you expect; how a bug here shows from outside |
 
 ## Notes
-Decisions made while building, and open questions. Filled in during the build.
+Decisions made during the build that matter only to this task, and open questions, one or two lines each. A decision that outlives the task goes to `docs/architecture/decisions.md`.
 
 ## Review
-Filled in by `/task`: the verifier's verdict, the reviewer's findings and what was done with each.
+Filled in by `/task`, in this compact form:
+
+**Reviewer, <date>:** <n> must-fix, <n> should-fix, <n> nits.
+1. [must-fix, fixed] `path:line`: what broke, and what changed.
+2. [nit, left] `path:line`: what it is.
+
+**Verifier, <date>: <VERDICT>.** 1 pass (exit 0) · 2 pass · 3 human: confirmed in run 2 · Scope clean · Test integrity clean.
+
+**Done, <date>:** what the developer confirmed; final verdict DONE.
