@@ -464,7 +464,8 @@ A site or object the user can't access returns `404`, never `403`, so ids can't 
 **Dependencies**
 
 - Lockfiles are committed. GitHub Actions are pinned to a version or a commit SHA.
-- In the security pass, CI gains `pip-audit`, `pnpm audit --prod`, Trivy on the images and `gitleaks`, each failing on high severity. Dependabot or Renovate opens update PRs.
+- Dependabot opens update PRs (`.github/dependabot.yml`): security fixes as soon as an advisory appears, and a weekly grouped PR for minor and patch versions of the backend packages and the Actions. Major versions come as separate PRs and are planned as tasks. Every merge to `main` deploys, so these PRs are merged by hand after CI passes.
+- In the security pass, CI gains `pip-audit`, `pnpm audit --prod`, Trivy on the images and `gitleaks`, each failing on high severity.
 - A new dependency is reviewed in its PR: is it maintained, how big is it, what does it pull in? Prefer the standard library for small things.
 - Mieru never fetches a URL a user supplied. The "is it installed?" check queries ClickHouse, not the site.
 
