@@ -1,0 +1,37 @@
+# Version updates. Security updates come separately, as soon as an advisory appears.
+# Minor and patch bumps are grouped into one PR per ecosystem; majors stay separate.
+# Every merge to main deploys, so these PRs are merged by hand after CI passes.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /apps/backend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      backend-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build(deps)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci(deps)
+
+  - package-ecosystem: docker
+    directory: /apps/backend
+    schedule:
+      interval: monthly
+    ignore:
+      # Moving to a new Python minor is a project decision (pyproject, CI, image), not a bump
+      - dependency-name: python
+        update-types: [version-update:semver-minor]
+    commit-message:
+      prefix: build(deps)
