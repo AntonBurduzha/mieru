@@ -126,9 +126,6 @@ jobs:
       - name: Push
         run: docker push --all-tags ghcr.io/antonburduzha/mieru-app
 
-  # Deploys the image just pushed. The steps live in deploy.yml, so a rollback
-  # (Actions -> Deploy -> Run workflow) runs exactly the same ones. The production
-  # environment's secrets reach the called job through its own `environment:`
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: publish
@@ -136,3 +133,5 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       sha: ${{ github.sha }}
+    secrets:
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}

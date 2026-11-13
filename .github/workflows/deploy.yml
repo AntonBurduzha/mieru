@@ -9,6 +9,10 @@ on:
         description: Full commit sha on main
         type: string
         required: true
+
+    secrets:
+      DEPLOY_SSH_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       sha:
@@ -48,6 +52,10 @@ jobs:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
         run: |
+          if [[ -z $DEPLOY_SSH_KEY ]]; then
+            echo "::error::DEPLOY_SSH_KEY is empty: set it in the production environment, and pass it by name from the caller"
+            exit 1
+          fi
           key="$RUNNER_TEMP/deploy_key"
           hosts="$RUNNER_TEMP/known_hosts"
           trap 'rm -f "$key"' EXIT
