@@ -2,7 +2,7 @@
 id: T05
 title: Postgres layer
 mode: human
-status: build
+status: done
 features: []
 depends: [T01]
 branch: t05-postgres-layer
@@ -137,7 +137,16 @@ After the merge (not part of DONE):
 - your own sites are created on the server with the steps in `ops/README.md`.
 
 ## Where to debug
-Written in run 2, from the code on disk.
+Paths are under `apps/backend/` unless they start with `ops/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| A taken domain becomes `Conflict`, and the session survives | `src/mieru/services/sites.py:32` (`create_site`), the `except` on line 34 | the Cursor config `pytest: -k` with `taken_domain` | `exc.orig` is asyncpg's `UniqueViolationError` on `uq_sites_domain`. After line 35, `session.in_transaction()` is still `True`: only the SAVEPOINT was rolled back. A `PendingRollbackError` in the next call means the insert ran outside `begin_nested()` |
+| Which inputs are refused before any write | `src/mieru/services/sites.py:26` (the timezone) and line 28 (the organization) | `pytest: -k` with `unknown_timezone` or `unknown_organization` | `len(_timezones())`: about 598 on a Mac and 486 in the image, which has no legacy aliases such as `Europe/Kiev`. A zone that passes locally and fails on the server shows up here |
+| The tool's transaction: one commit, or nothing | `src/mieru/tools/create_site.py:45` (`run`), the rollback on line 47 | `pytest: -k` with `exits_1`, or `uv run python -m mieru.tools.create_site --org-name X --domain example.com` twice | On an error after `insert_organization` (line 41), the new organization must be gone after line 47. The `Late` organization count in the test is 0 |
+| The test database: created once, migrated once | `tests/integration/conftest.py:69` (`test_database`), `CREATE DATABASE` on line 78, the upgrade on line 81 | criterion 2's command, or `pytest: current file` on `tests/integration/db/test_isolation.py` | `exists` is `None` on a fresh run. "asyncio.run() cannot be called from a running event loop" means the upgrade ran without `asyncio.to_thread` |
+| Each test's rollback | `tests/integration/conftest.py:96` (`db_session`), the rollback on line 105 | `pytest: current file` on `test_isolation.py`, with a breakpoint on line 105 | `transaction.is_active` is `True` before line 105, even after the test's `commit()`, because of `join_transaction_mode="create_savepoint"` on line 99 |
+| Which database a migration runs on, and when the deploy stops | `migrations/env.py:20` (`database_url`) and `ops/deploy.sh:101` (`migrate`) | `uv run alembic upgrade head` from `apps/backend`; on the server, the deploy log | Locally `sqlalchemy.url` is unset, so the URL is `DATABASE_URL`; the tests set it to `mieru_test`. A lock held for over 10 s fails with `LockNotAvailableError` (line 55), and the deploy logs `Postgres migrations failed; nothing was restarted` |
 
 ## Notes
 - The test database is created by a fixture (`CREATE DATABASE mieru_test` when it's missing), not by a compose init script. An init script runs only on a fresh volume, and CI would need it too.
@@ -147,3 +156,22 @@ Written in run 2, from the code on disk.
 - Added after gate 1: `.dockerignore`. It lets only listed paths into the image build, so `alembic.ini` and `migrations/` must be added there for criterion 6.
 
 ## Review
+**Reviewer, 2026-11-14:** 0 must-fix, 5 should-fix, 7 nits. The reviewer also ran `alembic upgrade head --sql` inside the image: `env.py` loads the models and the settings there, and the SQL matches Interfaces.
+1. [should-fix, fixed] `src/mieru/models/base.py:15`: a second, unused `MetaData` at module level. A table declared on it would have escaped autogenerate and `alembic check` without an error. Removed.
+2. [should-fix, fixed] `src/mieru/models/salt.py:10`: the docstring said a salt belongs to a site and signs events. It now says one row per UTC day, shared by every site, keying that day's visitor hash.
+3. [should-fix, fixed] `tests/integration/db/test_migrations.py`: criterion 1's test compared only column names, and `command.check` can't catch a mistake made in both the model and the migration. Added `test_the_keys_and_defaults_are_as_in_the_spec`: the identity, the server defaults, `ON DELETE CASCADE` and the two indexes. It fails when `ondelete` is removed from the migration (`None != 'CASCADE'`).
+4. [should-fix, fixed] `migrations/env.py:50`: no `lock_timeout`, so a later `ALTER` stuck behind an open transaction would queue every query on the table and hold the deploy lock. The engine now sets `lock_timeout` to 10 s.
+5. [should-fix, fixed] `ops/README.md`, section 10: the rollback text held only for target commits from T05 on. Corrected.
+6. [nit, left] `src/mieru/services/sites.py:15` and `src/mieru/tools/create_site.py:64`: `normalize_domain` and `main` have no docstring (conventions section 4).
+7. [nit, left] `tests/integration/conftest.py:1`: the module docstring was deleted, not updated.
+8. [nit, left] (design) `src/mieru/tools/create_site.py:41`: the tool calls the repository `insert_organization` directly, past the services layer, while `services/__init__.py` says tools call services. A `create_organization` service fits T16's signup.
+9. [nit, left] (design) `src/mieru/services/sites.py:21`: `available_timezones()` has 598 zones on a Mac and 486 in the image (no legacy aliases such as `Europe/Kiev`). For T17: the `tzdata` package, or a fixed list of canonical names.
+10. [nit, left] `ops/README.md`, section 6: on a first start the apps start before the tables exist. Harmless until T07's ingest reads `sites` at startup; then start `postgres` first, migrate, and start the rest.
+11. [nit, left] `tests/integration/tools/test_create_site.py`: `run_once` and `main` are never run by a test.
+12. [nit, left] `src/mieru/models/site.py:23`: `ondelete="cascade"` is lowercase, the migration's is `"CASCADE"`. Same to Postgres.
+
+**Verifier, 2026-11-14: DONE** (before the fixes). 1 pass (exit 0, 3 passed) · 2 pass (exit 0, `mieru_test` dropped and re-created at `0001`) · 3 pass · 4 pass (11 passed) · 5 pass (8 passed; the real entrypoint exits 2 on a missing owner) · 6 pass (`0001 (head)`) · 7 human: confirmed in run 2 · Standard checks exit 0 (86 passed) · Scope clean · Test integrity clean.
+
+**Verifier, 2026-11-14: DONE** (after the fixes). 1 pass (4 passed, the new keys-and-defaults test included) · 2 pass (7 passed; `mieru_test` re-created at `0001`) · 3 pass · 4 pass (11 passed) · 5 pass (8 passed) · 6 pass (rebuilt; `0001 (head)`, the image's `env.py` has `lock_timeout`) · 7 human: confirmed in run 2 · Standard checks exit 0 (87 passed) · Debug map matches the files · Scope clean · Test integrity clean.
+
+**Done, 2026-11-14:** the developer confirmed criterion 7 (the migrate command in the production rehearsal) and the "Test it yourself" steps by running `/task T05`. Final verdict DONE.

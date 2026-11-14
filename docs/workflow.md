@@ -29,9 +29,12 @@ docker compose ps                    # all three "running (healthy)"; ClickHouse
 
 cd apps/backend
 uv sync                              # creates .venv with Python 3.13 and the locked dependencies
+uv run alembic upgrade head          # creates the tables in your database, mieru
 uv run ruff check . && uv run mypy src tests
-uv run pytest                        # unit and integration tests
+uv run pytest                        # unit and integration tests; creates and migrates mieru_test itself
 ```
+
+After a pull that adds a migration, run `uv run alembic upgrade head` again; `uv run alembic current` names the revision your database is at. To get a site to work with until there are accounts: `uv run python -m mieru.tools.create_site --org-name Me --domain example.com --timezone Europe/Kyiv`.
 
 Then start the two apps, one per terminal, from `apps/backend`:
 

@@ -3,4 +3,6 @@
 !apps/backend/uv.lock
 !apps/backend/README.md
 !apps/backend/src/
+!apps/backend/alembic.ini
+!apps/backend/migrations/
 **/__pycache__

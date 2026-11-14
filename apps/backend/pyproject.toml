@@ -66,6 +66,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+# tests import their helpers as tests.factories; "." is apps/backend
+pythonpath = ["."]
 markers = [
   "integration: needs postgres/redis/clickhouse from compose",
   "e2e: needs every service running",

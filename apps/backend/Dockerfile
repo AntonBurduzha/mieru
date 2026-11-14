@@ -24,6 +24,9 @@ RUN groupadd --system --gid 10001 mieru \
 WORKDIR /app
 
 COPY --from=build /app/.venv /app/.venv
+# Alembic config and scripts: a one-off container migrates before each deploy
+COPY apps/backend/alembic.ini ./
+COPY apps/backend/migrations ./migrations
 ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
 USER 10001:10001
 EXPOSE 8000 8001

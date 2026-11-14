@@ -92,9 +92,13 @@ sync_checkout() {
 }
 
 migrate() {
-  # T05 adds Alembic (Postgres) here and T06 the ClickHouse runner. A failed
-  # migration must stop the deploy before any container restarts
-  log "Migrations: none yet"
+  # A one-off container of the new image migrates Postgres. A failure stops the
+  # deploy here, before .env names the new tag and before any restart.
+  # --no-deps: the databases are already up. -T: CI's ssh session has no terminal.
+  # T06 adds the ClickHouse runner
+  log "Migrating Postgres"
+  MIERU_TAG=$SHA docker compose -f compose.prod.yaml run --rm --no-deps -T api \
+    alembic upgrade head || die "Postgres migrations failed; nothing was restarted"
 }
 
 # Points MIERU_TAG in .env at the commit, so compose and later manual runs use its image
