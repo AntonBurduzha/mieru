@@ -17,6 +17,7 @@ docker compose up -d                    # Postgres, Redis, ClickHouse
 cd apps/backend
 uv sync
 uv run alembic upgrade head             # the Postgres tables
+uv run python -m mieru.tools.ch_migrate # the ClickHouse tables
 uv run pytest                           # unit and integration tests
 uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000
 ```

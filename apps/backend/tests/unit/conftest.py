@@ -37,27 +37,27 @@ if problems:
 
 @pytest.fixture
 def no_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every settings variable from the environment."""
-    for name in SETTINGS_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+  """Remove every settings variable from the environment."""
+  for name in SETTINGS_ENV_VARS:
+    monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
 def import_in_clean_process(
-    tmp_path: Path,
+  tmp_path: Path,
 ) -> Callable[[str], subprocess.CompletedProcess[str]]:
-    """Import a module in a new Python with no settings in its env and a cwd outside the repo."""
+  """Import a module in a new Python with no settings in its env and a cwd outside the repo."""
 
-    def run(module: str) -> subprocess.CompletedProcess[str]:
-        env = {k: v for k, v in os.environ.items() if k not in SETTINGS_ENV_VARS}
-        return subprocess.run(  # noqa: S603 (fixed interpreter and script, no shell)
-            [sys.executable, "-c", IMPORT_CHECK, module],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
+  def run(module: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in SETTINGS_ENV_VARS}
+    return subprocess.run(  # noqa: S603 (fixed interpreter and script, no shell)
+      [sys.executable, "-c", IMPORT_CHECK, module],
+      cwd=tmp_path,
+      env=env,
+      capture_output=True,
+      text=True,
+      timeout=60,
+      check=False,
+    )
 
-    return run
+  return run

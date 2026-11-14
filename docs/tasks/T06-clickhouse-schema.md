@@ -2,7 +2,7 @@
 id: T06
 title: ClickHouse schema
 mode: human
-status: build
+status: done
 features: []
 depends: [T01]
 branch: t06-clickhouse-schema
@@ -139,10 +139,19 @@ Criteria 7 and 8, beyond the standard checks.
 After the merge (not part of DONE): the deploy log shows the ClickHouse step, and `SHOW TABLES FROM mieru` on the server lists `events`.
 
 ## Where to debug
-Written in run 2, from the developer's code.
+Paths are under `apps/backend/` unless they start with `ops/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Which files are pending, and whether an applied file changed | `src/mieru/tools/ch_migrate.py:72` (`pending`), the checksum check on line 75 | the Cursor config `pytest: -k` with `changed_applied_file` | `applied` maps version to the recorded sha256. On a changed file `recorded != migration.checksum`, and nothing after 0000 runs. Note that 0000 itself already ran on line 99, before this check (nit 1) |
+| A version in the database with no file: a warning, not an error | `src/mieru/tools/ch_migrate.py:108` (`migrate`) | `pytest: -k` with `without_a_file` | `known` holds the file versions and `result.result_rows` the recorded rows. The warning goes to stderr; the exit code stays 0 |
+| Where a run stops, and what gets recorded | `src/mieru/tools/ch_migrate.py:122` (the insert into `schema_migrations`), after `execute` on line 118 | `pytest: -k` with `bad_statement`, a breakpoint on line 86 | `execute` turns ClickHouse's `DatabaseError` into `MigrationError` naming the file, so the loop never reaches line 122 for it. `run_once` (line 147) prints it and returns 1 |
+| Which files exist at all: name and version | `src/mieru/tools/ch_migrate.py:54` (`load_migrations`), the repeated version on line 58 | `pytest: current file` on `tests/unit/tools/test_ch_migrate.py` | `FILE_NAME.fullmatch` is `None` for `1_events.sql` or `0001-events.sql`. `found` is keyed by version, so `0001_a` and `0001_b` collide |
+| The test database: dropped, created and migrated once per run | `tests/integration/conftest.py:102` (`ch_test_database`), the drop on line 110, `migrate` on line 116 | `pytest: current file` on `tests/integration/clickhouse/test_isolation.py` | `admin` uses the developer's database `mieru`, while `test` uses `mieru_test` from `settings`. Each test's `site_id` comes from line 133 |
+| When the deploy stops on ClickHouse | `ops/deploy.sh:94` (`migrate`), the ClickHouse step on line 103 | the deploy log on the server, or the rehearsal from `README.md` | `deploy: ClickHouse migrations failed; nothing was restarted`, with the `migration_failed: <file> ...` line above it |
 
 ## Notes
-- **A runner of our own, with plain SQL files**, not a library (clickhouse-migrations, golang-migrate) or Alembic with a ClickHouse dialect: about 80 lines, no new dependency, and the SQL is exactly what ClickHouse runs. Goes into `decisions.md` as row 37.
+- **A runner of our own, with plain SQL files**, not a library (clickhouse-migrations, golang-migrate) or Alembic with a ClickHouse dialect: about 80 lines planned (170 as built, docstrings included), no new dependency, and the SQL is exactly what ClickHouse runs. Goes into `decisions.md` as row 37.
 - **The test database is dropped and recreated on every run**, not "migrated once and truncated" as `conventions.md` 6.3 says now. With `non_replicated_deduplication_window`, ClickHouse may drop a block identical to one it stored before, and TRUNCATE is not sure to clear that memory. Tests with a frozen clock and a counter that restarts at 100,000 insert identical blocks run after run. A fresh database also runs the migrations from zero every time. Section 6.3 is updated in run 2.
 - **A recorded version with no file is a warning**, unlike Alembic's `Can't locate revision`. A rollback to an image from before a ClickHouse migration then still deploys, because the schema only expands. An applied file that changed is always an error.
 - **`--dir` is relative to the working directory** (`apps/backend` locally, `/app` in the image), like `alembic.ini`. The alternative, SQL files inside the package read with `importlib.resources`, would move them out of `apps/backend/clickhouse/`, where the conventions put them.
@@ -150,3 +159,15 @@ Written in run 2, from the developer's code.
 - Changed after gate 1: criterion 5 first dropped `mieru_test` by hand in its command. `.claude/hooks/protect.sh` blocks any command with `DROP DATABASE`, so the verifier couldn't run it. Now a test checks that the rows in `schema_migrations` were written during this run.
 
 ## Review
+**Out of scope, kept by the developer:** `.editorconfig` (a trailing newline) and `apps/backend/src/mieru/core/errors.py:114` (an `if/else` turned into a ternary, same behaviour).
+
+**Reviewer, 2026-11-14:** 0 must-fix, 0 should-fix, 5 nits.
+1. [nit, left] `apps/backend/src/mieru/tools/ch_migrate.py:99`: 0000 runs before `pending()` compares its checksum, so an edited 0000 still runs before the exit 1. Harmless today (`IF NOT EXISTS` on an existing table).
+2. [nit, left] `apps/backend/src/mieru/tools/ch_migrate.py:147`: on a partial failure, the files applied in that run aren't printed; only the failed one is named.
+3. [nit, left] `apps/backend/src/mieru/tools/ch_migrate.py:122`: a failed insert into `schema_migrations` reaches the generic `DatabaseError` branch, so stderr doesn't name the file.
+4. [nit, left] `apps/backend/src/mieru/tools/ch_migrate.py:66`: a file that isn't UTF-8 gives a traceback, not `migration_failed`.
+5. [nit, left] `apps/backend/tests/integration/tools/test_ch_migrate.py`: a repeated version is tested only in the unit test, not end to end for exit 1.
+
+**Verifier, 2026-11-14: NEED_HUMAN.** 1 pass (exit 0) · 2 pass · 3 pass · 4 pass · 5 pass · 6 pass · 7 pass (the image lists both SQL files) · 8 human · ruff, format, mypy clean · `uv run pytest` 113 passed · Scope clean · Test integrity clean.
+
+**Done, 2026-11-14:** the developer ran the tutorial's Definition of done, the criterion 8 rehearsal included, and confirmed it with `/task T06`; final verdict DONE.
