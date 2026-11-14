@@ -31,6 +31,7 @@ erDiagram
         text stripe_subscription_id
         text subscription_status
         timestamptz current_period_end
+        timestamptz created_at
     }
     memberships {
         uuid user_id PK
@@ -50,6 +51,7 @@ erDiagram
         text timezone
         text status "active | over_quota | blocked"
         int rate_limit_per_min
+        timestamptz created_at
     }
     goals {
         uuid id PK
@@ -96,11 +98,18 @@ erDiagram
 
 **MVP tables:** `users`, `organizations`, `memberships`, `auth_sessions`, `sites`, `salts`. The others are created with their features after the MVP.
 
+**Built so far:** `organizations`, `sites` and `salts`, created by Alembic revision `0001` (`apps/backend/migrations/`). The models are in `mieru.models`. `organizations` has only `id`, `name` and `created_at` for now; the plan and Stripe columns come with billing.
+
 Decisions worth noting:
 
 1. **Every user gets a personal organization at signup**, and sites belong to the organization. Adding team members later is then a row in `memberships`, not a migration.
-2. **`sites.id` is a plain integer**, unlike the other keys. It is repeated on every event row in ClickHouse, where a 4-byte integer sorts and compresses far better than a UUID.
+2. **`sites.id` is a plain integer**, unlike the other keys. It is repeated on every event row in ClickHouse, where a 4-byte integer sorts and compresses far better than a UUID. It is `GENERATED ALWAYS AS IDENTITY`, so only Postgres hands out ids. Organization ids stay UUIDs (`gen_random_uuid()`), which reveal neither how many customers there are nor the next id.
 3. **`stripe_events` exists only for idempotency.** Stripe may deliver a webhook more than once; the unique event id makes the second delivery a no-op.
+4. **`sites.status` is `text` with a CHECK**, not a Postgres enum. A later migration replaces a CHECK in one statement, while a value can't be removed from an enum. The cost: Postgres knows the allowed values only through the CHECK.
+5. **`sites.domain` is unique and stored normalized** (lowercase, without a leading `www.`; [conventions.md](../conventions.md) section 5), so `WWW.Example.com` and `example.com` collide. Deleting an organization deletes its sites (`ON DELETE CASCADE`).
+6. **`created_at` is set by the application** from `mieru.core.clock.now()`, not by a database default, so tests can freeze it. A raw `INSERT` must supply it.
+7. **Every constraint is named by a convention** on `Base.metadata`: `pk_sites`, `uq_sites_domain`, `ck_sites_status`, `fk_sites_organization_id_organizations`, `ix_sites_organization_id`. A later migration can then drop or change a constraint by a name it knows, on every database.
+8. **`salts` has one row per UTC day**, shared by every site: `day` is the key, and a CHECK keeps `salt` at exactly 16 bytes. When rows are created and deleted: [privacy.md](privacy.md), "Salt lifecycle".
 
 ## ClickHouse (events)
 

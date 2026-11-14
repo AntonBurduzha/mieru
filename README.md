@@ -16,11 +16,19 @@ cp .env.example .env
 docker compose up -d                    # Postgres, Redis, ClickHouse
 cd apps/backend
 uv sync
+uv run alembic upgrade head             # the Postgres tables
 uv run pytest                           # unit and integration tests
 uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000
 ```
 
 In another terminal, `curl localhost:8000/health/ready` prints `{"postgres":"ok","redis":"ok","clickhouse":"ok"}`.
+
+There are no accounts yet, so a site is created from the command line, in `apps/backend`:
+
+```bash
+uv run python -m mieru.tools.create_site --org-name Me --domain example.com --timezone Europe/Kyiv
+# site_id=1 organization_id=<uuid> domain=example.com
+```
 
 ## Production stack, rehearsed locally
 

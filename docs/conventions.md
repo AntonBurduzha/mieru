@@ -53,23 +53,25 @@ mieru/
     │   ├── pyproject.toml    # dependencies and ruff, mypy, pytest config
     │   ├── uv.lock
     │   ├── Dockerfile
-    │   ├── migrations/       # (later) Alembic, Postgres only
+    │   ├── alembic.ini       # Alembic config; the URL comes from Settings
+    │   ├── migrations/       # Alembic, Postgres only: env.py, versions/0001_<slug>.py ...
     │   ├── clickhouse/       # (later) 0001_events.sql ... applied by mieru.tools.ch_migrate
     │   ├── data/             # (later) dbip-country-lite.mmdb, downloaded, gitignored
     │   ├── src/mieru/
     │   │   ├── core/         # config, logging, errors, clock, redis, clickhouse, health
     │   │   ├── db/           # SQLAlchemy engine and sessions
-    │   │   ├── models/       # (later) SQLAlchemy tables: the database shape
+    │   │   ├── models/       # SQLAlchemy tables: the database shape
     │   │   ├── schemas/      # (later) Pydantic models: the API shape
-    │   │   ├── repositories/ # (later) SQL only, always scoped by org or site
-    │   │   ├── services/     # (later) business rules: auth, sites, salts
+    │   │   ├── repositories/ # SQL only, always scoped by org or site
+    │   │   ├── services/     # business rules: sites, then auth and salts
     │   │   ├── api/          # dashboard API: app.py, deps.py, routes/
     │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, stream
     │   │   ├── writer/       # (later) __main__, consumer, enrich, useragent, sources, sessions, inserter
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
     │   │   ├── worker/       # (later) __main__ with the scheduler loop, tasks
-    │   │   └── tools/        # (later) seed.py, ch_migrate.py
+    │   │   └── tools/        # command-line tools: create_site.py, later seed.py and ch_migrate.py
     │   └── tests/
+    │       ├── factories.py  # make_organization, make_site: valid rows with overridable defaults
     │       ├── unit/         # no I/O, milliseconds
     │       ├── integration/  # real Postgres, Redis and ClickHouse from compose
     │       └── e2e/          # (later) the whole pipeline: payload -> ClickHouse -> stats API
@@ -97,7 +99,7 @@ mieru/
 
 **One backend package, four entrypoints.** `ingest`, `api`, `writer` and `worker` share models, config and helpers. One package and one image means one set of dependencies and one build. Each container starts a different module (section 3).
 
-**`src/` layout.** Tests import the installed package (`from mieru.core.config import Settings`), not whatever is in the current folder. That removes a whole class of import bugs.
+**`src/` layout.** Tests import the installed package (`from mieru.core.config import Settings`), not whatever is in the current folder. That removes a whole class of import bugs. Test helpers are the exception: tests import them as `tests.factories`, which works because pytest's `pythonpath = ["."]` puts `apps/backend` on the import path.
 
 **Public and private.** The repository is public. Everything in it is project material, including the agent setup in `.claude/` and the task specs. Only `docs/learn/`, `.claude/skills/task/human.md`, `CLAUDE.local.md` and `.claude/settings.local.json` are private and gitignored. Public files never link to private ones.
 
@@ -224,7 +226,7 @@ Fixed here so that tasks written weeks apart fit together. Specs use these names
 **Data rules**
 
 - An unknown country is `ZZ`.
-- Domains are lowercased, and a leading `www.` is removed.
+- Domains are stripped of spaces and lowercased, and one leading `www.` is removed (`www.www.a.com` becomes `www.a.com`): `mieru.services.sites.normalize_domain`.
 - Session ids are `secrets.randbits(63)`, so they fit a signed 64-bit integer.
 - A site's default `rate_limit_per_min` is 6000.
 
@@ -257,12 +259,12 @@ Response shapes, in order: aggregate, timeseries, breakdown, realtime.
 | Area | Names |
 |---|---|
 | Core | `mieru.core.security`: `new_token`, `hash_token`, `hash_password`, `verify_password` |
-| Services | `services/sites.py`, `services/salts.py` (`ensure_salts`) |
+| Services | `services/sites.py` (`normalize_domain`, `create_site`), `services/salts.py` (`ensure_salts`) |
 | Repositories | `get_site_for_user(session, user_id, site_id)`, `get_site_by_domain(session, domain)` |
-| Postgres | `email_tokens(id, user_id, token_hash unique, purpose, expires_at, used_at)` for email links |
+| Postgres | `email_tokens(id, user_id, token_hash unique, purpose, expires_at, used_at)` for email links. Constraint names: `pk_<table>`, `fk_<table>_<column>_<referred table>`, `uq_<table>_<column>`, `ck_<table>_<name>`, `ix_<table>_<column>`. Migrations: `migrations/versions/<NNNN>_<slug>.py` with revision id `<NNNN>`, made by `alembic revision --autogenerate --rev-id <NNNN> -m "<what>"` and read before committing |
 | ClickHouse | migrations `0000_schema_migrations.sql` ... `0003_sessions_mv.sql`, one statement per file; `events` has `non_replicated_deduplication_window = 1000` |
 | Worker | `rotate_salts` |
-| Tools | `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate` (applies `clickhouse/*.sql` in order) |
+| Tools | `python -m mieru.tools.create_site --domain <d> [--timezone <tz>] (--org-name <name> \| --org-id <uuid>)` (prints `site_id=<int> organization_id=<uuid> domain=<normalized>`; exit 1 on `conflict`, `not_found` or `validation_failed`, with nothing written); `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate` (applies `clickhouse/*.sql` in order) |
 | Tracker | `build.mjs` writes `dist/p.js` and copies it to `apps/backend/src/mieru/ingest/static/p.js` (gitignored), which `ingest` serves |
 
 ### Later (after the MVP)
@@ -314,9 +316,11 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 
 | Store | Test target | Isolation |
 |---|---|---|
-| Postgres | database `mieru_test` | Migrated once per run; each test runs in an outer transaction that is rolled back |
+| Postgres | database `mieru_test` | Created when missing and migrated to head once per run; each test runs in an outer transaction that is rolled back |
 | Redis | database 15 | `FLUSHDB` before each test that asks for Redis |
 | ClickHouse | database `mieru_test` | Migrated once per run, tables truncated once at the start. Each test gets a fresh `site_id` from a counter starting at 100,000, so tests never see each other's rows |
+
+**Postgres fixtures** (`tests/integration/conftest.py`). `test_database` runs once per run, before the first integration test, without being asked for (`autouse=True`): it creates `mieru_test` if it's missing and runs `alembic upgrade head` on it. A test that asks for `db_session` gets a session on a connection whose outer transaction is rolled back when the test ends. The session joins that transaction with `join_transaction_mode="create_savepoint"`, so a `commit()` or `rollback()` in the code under test acts on a SAVEPOINT, and the test can check what a commit leaves behind. The limit: code that opens its own connection (an app's own engine) can't see the test's rows, so an API test must hand its route the test's session. The migration test works on a scratch database of its own, `mieru_test_migrations`, so going down and up never touches `mieru_test`.
 
 ClickHouse has no cheap rollback, and truncating per test costs tens of milliseconds. Every real query filters by `site_id` anyway, so a unique id per test is free isolation.
 

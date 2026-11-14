@@ -55,6 +55,7 @@ The first time only, the whole stack starts by hand:
 cd /srv/mieru
 docker manifest inspect ghcr.io/antonburduzha/mieru-app:$(git rev-parse HEAD) > /dev/null   # CI has published this commit
 docker compose -f compose.prod.yaml up -d --wait
+docker compose -f compose.prod.yaml run --rm --no-deps api alembic upgrade head   # the Postgres tables
 timeout 120 docker compose -f compose.prod.yaml logs -f caddy | grep -m1 'certificate obtained successfully'   # the first issuance can take a minute
 curl -s https://<domain>/api/v1/version          # the sha from step 5
 ```
@@ -65,7 +66,9 @@ After that, every merge to `main` deploys itself (step 9). To deploy a commit by
 ssh deploy@<ip> /srv/mieru/ops/deploy.sh <full sha on main>
 ```
 
-`deploy.sh` refuses a commit that isn't on `main`, a checkout with local changes, and a second deploy while one runs. It pulls the image, detaches the checkout at the commit, sets `MIERU_TAG` in `.env`, and restarts `ingest-1`, `ingest-2` and `api` one at a time, each ready before the next. The databases and `caddy` keep running; Caddy only reloads its config. The checkout stays detached at the deployed commit, so `git -C /srv/mieru rev-parse HEAD` names what runs.
+`deploy.sh` refuses a commit that isn't on `main`, a checkout with local changes, and a second deploy while one runs. It pulls the image, detaches the checkout at the commit, migrates Postgres, sets `MIERU_TAG` in `.env`, and restarts `ingest-1`, `ingest-2` and `api` one at a time, each ready before the next. The databases and `caddy` keep running; Caddy only reloads its config. The checkout stays detached at the deployed commit, so `git -C /srv/mieru rev-parse HEAD` names what runs.
+
+**Migrations.** `alembic upgrade head` runs in a one-off `api` container of the new image (`run --rm --no-deps`), while the old containers keep serving. A migration waits at most 10 s for a lock (`lock_timeout` in `migrations/env.py`). A failed migration stops the deploy before `.env` changes and before any restart; the log ends with `deploy: Postgres migrations failed; nothing was restarted`. That is why every migration must work with the code already running (expand, migrate, contract: [deployment.md](../docs/architecture/deployment.md)). `docker compose -f compose.prod.yaml exec api alembic current` names the revision the database is at.
 
 ## 7. After a reboot
 
@@ -114,7 +117,7 @@ A rollback is a deploy of an earlier commit on `main`; the checkout, `compose.pr
 - From GitHub: Actions -> Deploy -> Run workflow, branch `main`, with the commit's full sha. `git log --first-parent --format='%H %s' origin/main` lists the candidates.
 - By hand: `ssh deploy@<ip> /srv/mieru/ops/deploy.sh <sha>`.
 
-Migrations follow expand, migrate, contract, so the previous image still works with the newer schema. A commit from before T04 has no `ops/deploy.sh`. The CI key refuses it, because it would lock CI out, so roll back to it by hand only. The server then has no `deploy.sh` either, so deploy the next commit from a local checkout at T04 or later, which pipes its copy of the script:
+Migrations follow expand, migrate, contract, so the previous image still works with the newer schema. A rollback never undoes a migration. From T05 on, the older commit's deploy runs `alembic upgrade head` too, which does nothing while its image knows the database's revision. An image older than the database's revision doesn't know it, so its deploy fails with `Can't locate revision` and stops before any restart. A commit from before T05 runs no migrations, and its code doesn't read the tables. How to roll back across a migration is an open question in the [roadmap](../docs/roadmap.md), settled before the second migration. A commit from before T04 has no `ops/deploy.sh`. The CI key refuses it, because it would lock CI out, so roll back to it by hand only. The server then has no `deploy.sh` either, so deploy the next commit from a local checkout at T04 or later, which pipes its copy of the script:
 
 ```bash
 ssh deploy@<ip> 'bash -s -- <newer sha>' < ops/deploy.sh
@@ -129,3 +132,19 @@ A failed deploy stops where it failed: the services it hadn't reached keep the o
 ```bash
 cd /srv/mieru && docker compose -f compose.prod.yaml up -d --wait <service>
 ```
+
+## 12. Create a site
+
+Until there are accounts, sites are created by hand, in the running `api` container:
+
+```bash
+cd /srv/mieru
+docker compose -f compose.prod.yaml exec api python -m mieru.tools.create_site \
+  --org-name <name> --domain <domain> --timezone Europe/Kyiv
+# site_id=1 organization_id=<uuid> domain=<domain>
+```
+
+- The domain is stored lowercase, without a leading `www.`. `--timezone` is an IANA name and defaults to `UTC`.
+- For another site of the same organization, pass `--org-id <uuid>` from the first output instead of `--org-name`.
+- On an error the tool writes nothing and exits 1 with the reason on stderr: `conflict` (the domain is taken), `not_found` (no such organization) or `validation_failed` (an unknown timezone).
+- What exists: `docker compose -f compose.prod.yaml exec postgres psql -U mieru -d mieru -c 'SELECT id, domain, timezone, status FROM sites'`.
