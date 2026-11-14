@@ -55,7 +55,7 @@ mieru/
     │   ├── Dockerfile
     │   ├── alembic.ini       # Alembic config; the URL comes from Settings
     │   ├── migrations/       # Alembic, Postgres only: env.py, versions/0001_<slug>.py ...
-    │   ├── clickhouse/       # (later) 0001_events.sql ... applied by mieru.tools.ch_migrate
+    │   ├── clickhouse/       # 0000_schema_migrations.sql, 0001_events.sql ... applied by mieru.tools.ch_migrate
     │   ├── data/             # (later) dbip-country-lite.mmdb, downloaded, gitignored
     │   ├── src/mieru/
     │   │   ├── core/         # config, logging, errors, clock, redis, clickhouse, health
@@ -69,9 +69,9 @@ mieru/
     │   │   ├── writer/       # (later) __main__, consumer, enrich, useragent, sources, sessions, inserter
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
     │   │   ├── worker/       # (later) __main__ with the scheduler loop, tasks
-    │   │   └── tools/        # command-line tools: create_site.py, later seed.py and ch_migrate.py
+    │   │   └── tools/        # command-line tools: create_site.py, ch_migrate.py, later seed.py
     │   └── tests/
-    │       ├── factories.py  # make_organization, make_site: valid rows with overridable defaults
+    │       ├── factories.py  # make_organization, make_site, make_event: valid rows with overridable defaults
     │       ├── unit/         # no I/O, milliseconds
     │       ├── integration/  # real Postgres, Redis and ClickHouse from compose
     │       └── e2e/          # (later) the whole pipeline: payload -> ClickHouse -> stats API
@@ -262,9 +262,9 @@ Response shapes, in order: aggregate, timeseries, breakdown, realtime.
 | Services | `services/sites.py` (`normalize_domain`, `create_site`), `services/salts.py` (`ensure_salts`) |
 | Repositories | `get_site_for_user(session, user_id, site_id)`, `get_site_by_domain(session, domain)` |
 | Postgres | `email_tokens(id, user_id, token_hash unique, purpose, expires_at, used_at)` for email links. Constraint names: `pk_<table>`, `fk_<table>_<column>_<referred table>`, `uq_<table>_<column>`, `ck_<table>_<name>`, `ix_<table>_<column>`. Migrations: `migrations/versions/<NNNN>_<slug>.py` with revision id `<NNNN>`, made by `alembic revision --autogenerate --rev-id <NNNN> -m "<what>"` and read before committing |
-| ClickHouse | migrations `0000_schema_migrations.sql` ... `0003_sessions_mv.sql`, one statement per file; `events` has `non_replicated_deduplication_window = 1000` |
+| ClickHouse | migrations `clickhouse/<NNNN>_<slug>.sql`, `0000_schema_migrations.sql` ... `0003_sessions_mv.sql`: one statement per file, always `IF NOT EXISTS`. An applied file never changes: its sha256 is recorded, so add a new file instead. `events` has `non_replicated_deduplication_window = 1000` |
 | Worker | `rotate_salts` |
-| Tools | `python -m mieru.tools.create_site --domain <d> [--timezone <tz>] (--org-name <name> \| --org-id <uuid>)` (prints `site_id=<int> organization_id=<uuid> domain=<normalized>`; exit 1 on `conflict`, `not_found` or `validation_failed`, with nothing written); `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate` (applies `clickhouse/*.sql` in order) |
+| Tools | `python -m mieru.tools.create_site --domain <d> [--timezone <tz>] (--org-name <name> \| --org-id <uuid>)` (prints `site_id=<int> organization_id=<uuid> domain=<normalized>`; exit 1 on `conflict`, `not_found` or `validation_failed`, with nothing written); `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate [--dir clickhouse]` (applies the pending `clickhouse/*.sql` in order, `--dir` relative to the working directory; prints `applied <name>` per file, or `up to date (<latest>)`; exit 1 on `migration_failed` (a failed statement, a changed applied file, a bad file name), with stderr naming the file; a recorded version with no file is only a warning) |
 | Tracker | `build.mjs` writes `dist/p.js` and copies it to `apps/backend/src/mieru/ingest/static/p.js` (gitignored), which `ingest` serves |
 
 ### Later (after the MVP)
@@ -318,11 +318,13 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 |---|---|---|
 | Postgres | database `mieru_test` | Created when missing and migrated to head once per run; each test runs in an outer transaction that is rolled back |
 | Redis | database 15 | `FLUSHDB` before each test that asks for Redis |
-| ClickHouse | database `mieru_test` | Migrated once per run, tables truncated once at the start. Each test gets a fresh `site_id` from a counter starting at 100,000, so tests never see each other's rows |
+| ClickHouse | database `mieru_test` | Dropped, created and migrated once per run. Each test gets a fresh `site_id` from a counter starting at 100,000, so tests never see each other's rows |
 
 **Postgres fixtures** (`tests/integration/conftest.py`). `test_database` runs once per run, before the first integration test, without being asked for (`autouse=True`): it creates `mieru_test` if it's missing and runs `alembic upgrade head` on it. A test that asks for `db_session` gets a session on a connection whose outer transaction is rolled back when the test ends. The session joins that transaction with `join_transaction_mode="create_savepoint"`, so a `commit()` or `rollback()` in the code under test acts on a SAVEPOINT, and the test can check what a commit leaves behind. The limit: code that opens its own connection (an app's own engine) can't see the test's rows, so an API test must hand its route the test's session. The migration test works on a scratch database of its own, `mieru_test_migrations`, so going down and up never touches `mieru_test`.
 
-ClickHouse has no cheap rollback, and truncating per test costs tens of milliseconds. Every real query filters by `site_id` anyway, so a unique id per test is free isolation.
+**ClickHouse fixtures** (same file). `ch_test_database` runs once per run without being asked for, and returns the time it started. It connects to the developer's database `mieru`, because a client can't connect to a database that doesn't exist, and from there drops and creates `mieru_test`. Then it runs `migrate` on `mieru_test`. `ch` is one `AsyncClient` for `mieru_test`, shared by the run. `site_id` gives each test the next number from 100,000 up. `make_event(site_id, **overrides)` builds a valid page view, and `insert_events(client, events)` inserts a list in one block, as the writer will. The runner's own test works on a scratch database, `mieru_test_migrations`, with its SQL files in `tmp_path`.
+
+ClickHouse has no cheap rollback, and truncating per test costs tens of milliseconds. Every real query filters by `site_id` anyway, so a unique id per test is free isolation. The database is recreated, not truncated, because of the dedup window: ClickHouse may drop a block identical to one it stored before, and `TRUNCATE` is not sure to clear that memory. Tests with a frozen clock and a counter that restarts at 100,000 insert identical blocks run after run.
 
 ### 6.4 Time and data
 

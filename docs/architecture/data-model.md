@@ -115,40 +115,44 @@ Decisions worth noting:
 
 ClickHouse stores each column separately and keeps rows sorted by the table's `ORDER BY` key. A query that filters on the first key columns reads only the matching slice of only the columns it names. That is why "top pages for site 42 in October" is fast even with hundreds of millions of rows in the table.
 
-Sketch (final types are settled during the build):
+**Built in T06:** `apps/backend/clickhouse/0001_events.sql`, applied by `mieru.tools.ch_migrate` (decision 37). The runner records each applied file in `schema_migrations` (`0000_schema_migrations.sql`).
 
 ```sql
-CREATE TABLE events
+CREATE TABLE IF NOT EXISTS events
 (
-    site_id        UInt32,
-    timestamp      DateTime CODEC(Delta, ZSTD),
-    name           LowCardinality(String),      -- 'pageview' or a custom event name
-    visitor_id     UInt64,                      -- daily rotating hash
+    site_id        UInt32,                            -- sites.id in Postgres
+    timestamp      DateTime('UTC') CODEC(Delta, ZSTD),
+    name           LowCardinality(String),            -- 'pageview' or a custom event name
+    visitor_id     UInt64,                            -- the daily rotating hash
     session_id     UInt64,
-    session_start  DateTime,                    -- identical on every event of a session
+    session_start  DateTime('UTC'),                   -- the same on every event of a session
     hostname       LowCardinality(String),
     pathname       String CODEC(ZSTD(3)),
     -- session attributes, copied onto every event by the writer
-    source         LowCardinality(String),      -- 'Google', 'Direct', ...
+    source         LowCardinality(String),            -- 'Google', 'Direct', ...
     referrer       String CODEC(ZSTD(3)),
     utm_source     LowCardinality(String),
     utm_medium     LowCardinality(String),
     utm_campaign   LowCardinality(String),
-    country        LowCardinality(FixedString(2)),
-    device         LowCardinality(String),      -- desktop | mobile | tablet
+    country        LowCardinality(FixedString(2)),    -- 'ZZ' when unknown
+    device         LowCardinality(String),            -- desktop | mobile | tablet
     browser        LowCardinality(String),
     os             LowCardinality(String),
     props          Map(LowCardinality(String), String)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(timestamp)
-ORDER BY (site_id, toDate(timestamp), name, visitor_id, timestamp);
+ORDER BY (site_id, toDate(timestamp), name, visitor_id, timestamp)
+SETTINGS non_replicated_deduplication_window = 1000;
 ```
 
 - **`ORDER BY (site_id, date, ...)`** matches the filter every dashboard query has. It also puts one site's rows next to each other, which is what makes compression good.
 - **`LowCardinality`** stores a column with few distinct values (browser, country) as small integers plus a dictionary.
 - **Monthly partitions** make dropping old data a cheap metadata operation.
 - **Session attributes on every row** trade disk (cheap, and repeated values compress to almost nothing) for never needing a join.
+- **`DateTime('UTC')`**, not plain `DateTime`, so the server's timezone never changes how a timestamp is read or written.
+- **`non_replicated_deduplication_window = 1000`** makes ClickHouse remember the last 1000 inserted blocks and drop a repeat of one, so a batch the writer retries is stored once ([write-path.md](write-path.md), "Delivery guarantees").
+- **The enrichment columns exist from the start.** Until T13 enriches events, the writer fills them with `''`, and `country` with `ZZ`.
 
 **Sessions** are derived, not written by the application:
 

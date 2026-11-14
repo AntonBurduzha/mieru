@@ -13,16 +13,16 @@ PROBE_TIMEOUT_S = 2.0
 
 
 async def _run(name: str, probe: Probe) -> Status:
-    try:
-        async with asyncio.timeout(PROBE_TIMEOUT_S):
-            await probe()
-    except Exception as exc:
-        log.warning("dependency_unavailable", dependency=name, error_type=type(exc).__name__)
-        return "error"
-    return "ok"
+  try:
+    async with asyncio.timeout(PROBE_TIMEOUT_S):
+      await probe()
+  except Exception as exc:
+    log.warning("dependency_unavailable", dependency=name, error_type=type(exc).__name__)
+    return "error"
+  return "ok"
 
 
 async def check(probes: Mapping[str, Probe]) -> dict[str, Status]:
-    """Run every probe at the same time and report ok/error per dependency."""
-    results = await asyncio.gather(*(_run(name, probe) for name, probe in probes.items()))
-    return dict(zip(probes, results, strict=True))
+  """Run every probe at the same time and report ok/error per dependency."""
+  results = await asyncio.gather(*(_run(name, probe) for name, probe in probes.items()))
+  return dict(zip(probes, results, strict=True))

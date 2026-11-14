@@ -92,13 +92,15 @@ sync_checkout() {
 }
 
 migrate() {
-  # A one-off container of the new image migrates Postgres. A failure stops the
-  # deploy here, before .env names the new tag and before any restart.
+  # One-off containers of the new image migrate Postgres, then ClickHouse. A failure
+  # stops the deploy here, before .env names the new tag and before any restart.
   # --no-deps: the databases are already up. -T: CI's ssh session has no terminal.
-  # T06 adds the ClickHouse runner
   log "Migrating Postgres"
   MIERU_TAG=$SHA docker compose -f compose.prod.yaml run --rm --no-deps -T api \
     alembic upgrade head || die "Postgres migrations failed; nothing was restarted"
+  log "Migrating ClickHouse"
+  MIERU_TAG=$SHA docker compose -f compose.prod.yaml run --rm --no-deps -T api \
+    python -m mieru.tools.ch_migrate || die "ClickHouse migrations failed; nothing was restarted"
 }
 
 # Points MIERU_TAG in .env at the commit, so compose and later manual runs use its image

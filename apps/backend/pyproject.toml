@@ -36,6 +36,7 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+indent-width = 2
 target-version = "py313"
 src = ["src", "tests"]
 
