@@ -56,6 +56,8 @@ services:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=1)"]
     depends_on:
+      # Ingest loads its site and salt caches from Postgres before it serves
+      postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     mem_limit: 256m
 

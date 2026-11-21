@@ -33,17 +33,21 @@ sequenceDiagram
 
 In order. The cheap rejections come first.
 
-1. **Parse and validate** the body: event name up to 120 characters, URL up to 2,000, at most 30 properties, body at most 8 KB. A malformed body gets `400`.
-2. **Site lookup** in an in-process dictionary keyed by domain, refreshed from Postgres every 30 s. An unknown domain costs one lookup and is then remembered as unknown for 60 s, so a flood for a fake domain stays in memory.
+1. **Parse and validate** the body: event name up to 120 characters, URL up to 2,000, at most 30 properties, body at most 8 KB (every limit: [conventions.md](../conventions.md) section 7.2). The route reads the raw bytes whatever the content type, because the tracker sends `text/plain`, and stops reading once the body is over 8 KB. A Pydantic model (`mieru.ingest.pipeline.IngestEvent`) validates them. A malformed body gets `400 invalid_event`, and the error never echoes the input.
+2. **Site lookup** in an in-process dictionary that holds every site, keyed by normalized domain (`mieru.ingest.site_cache`). An unknown domain is a dictionary miss, so a flood for a fake domain never reaches Postgres ([decision 38](decisions.md)).
 3. **Site status**: `blocked` and `over_quota` sites are dropped here.
 4. **Bot filter**: empty or known-bot user agents, headless browsers, referrers on a spam blocklist.
-5. **Visitor id**: a keyed hash over domain, IP and user agent ([privacy.md](privacy.md)). The IP is the one Caddy saw on the TCP connection, passed to `ingest` in an `X-Real-IP` header that Caddy sets itself. `X-Forwarded-For` and any other forwarding header sent by the client are ignored.
+5. **Visitor id**: a keyed hash over domain, IP and user agent, under today's salt, plus the same hash under yesterday's salt ([privacy.md](privacy.md)). No salt for today drops the event as `no_salt`. The IP is the one Caddy saw on the TCP connection, passed to `ingest` in an `X-Real-IP` header that Caddy sets itself. Without that header (a local run with no Caddy) it is the TCP peer. `X-Forwarded-For` and `Forwarded` are never read, and in production uvicorn runs with `--no-proxy-headers` so it doesn't rewrite the peer from them.
 6. **Country**: lookup in a local IP-to-country database held in memory (DB-IP Lite, *est.* under 10 MB). Country only; city is a stretch goal because that database is many times larger and is loaded by every ingest container.
 7. **Discard the IP.**
 8. **Two Redis calls, no script.** First, a pipeline increments the site's per-minute counter and sets its expiry (`INCR rl:{site_id}:{minute}`, `EXPIRE … 120 NX`). If the count is over the site's limit, the event is dropped as `rate_limited`. Otherwise `XADD` appends it to the stream. The extra round trip on the internal network costs well under a millisecond. The check and the append are not atomic, so a few extra events can get in right at the limit, which does not matter for a rate limit ([decision 23](decisions.md)).
 9. **Answer `202`.** If the event was dropped at any step, the answer is still `202`, with an `X-Mieru-Dropped: <reason>` header, and a counter for that reason goes up.
 
 Nothing in this list waits on Postgres or ClickHouse. If both are down, ingest keeps accepting.
+
+**The caches.** Steps 2 and 5 read two in-process caches: every site, and the salts of yesterday, today and tomorrow. Before it serves, `ingest` loads both from Postgres (`mieru.ingest.refresh.refresh_once`), creating today's and tomorrow's salts when they're missing. If Postgres can't be reached, startup fails and Docker restarts the container ([decision 39](decisions.md)). A background task then reloads both every 30 s. A failed reload logs `cache_refresh_failed` with the error type and keeps the old caches, so a Postgres outage doesn't stop collection until the cached salts run out: they reach only to tomorrow, so past that day every event is dropped as `no_salt`. A new or changed site therefore takes up to 30 s to count. T17 adds an immediate reload through `sites:version`.
+
+**Built so far** (T07): steps 1-3, 5, 7 and 9, and the `XADD` from step 8. Bots, the rate limit, the drop counters, backpressure and the fallback queue come with T12, and the country with T13 (until then `cc` is `ZZ`). Until T12, an unreachable Redis drops the event as `redis_unavailable` and logs `event_dropped` with the reason and the error type.
 
 ## What `writer` does per batch
 

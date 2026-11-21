@@ -63,9 +63,9 @@ mieru/
     │   │   ├── models/       # SQLAlchemy tables: the database shape
     │   │   ├── schemas/      # (later) Pydantic models: the API shape
     │   │   ├── repositories/ # SQL only, always scoped by org or site
-    │   │   ├── services/     # business rules: sites, then auth and salts
+    │   │   ├── services/     # business rules: sites and salts, then auth
     │   │   ├── api/          # dashboard API: app.py, deps.py, routes/
-    │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, stream
+    │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, refresh, stream
     │   │   ├── writer/       # (later) __main__, consumer, enrich, useragent, sources, sessions, inserter
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
     │   │   ├── worker/       # (later) __main__ with the scheduler loop, tasks
@@ -123,7 +123,7 @@ flowchart LR
 
 1. **Dashboard API:** `routes -> services -> repositories -> models`. A route parses the request, calls one service function and returns a schema. Nothing skips a layer, and nothing imports upwards. Routes never touch SQL.
 2. **Pipelines (ingest, writer):** a pure function for each step (validate, classify, hash, enrich) and thin adapters for I/O (Redis, ClickHouse). The pure steps are unit-tested in milliseconds; only the adapters need real databases.
-3. **Tenant boundary:** every repository function on tenant data takes `org_id` or `site_id`. Every ClickHouse query gets `site_id` from the server after a membership check, never from the client.
+3. **Tenant boundary:** every repository function on tenant data takes `org_id` or `site_id`. Every ClickHouse query gets `site_id` from the server after a membership check, never from the client. The one exception is `repositories.sites.list_all_sites`, which loads every site into the ingest cache; its rows never leave `ingest`, and nothing else may call it.
 4. **Time:** code never calls `datetime.now()`. It calls `mieru.core.clock.now()` or `clock.today()`, so tests can freeze time. Salts, sessions and quotas all depend on dates.
 5. **Errors:** raise a subclass of `AppError` from `mieru.core.errors`. One handler turns every error into `{"error": {"code", "message", "details"}}` (codes in section 5).
 6. **Async everywhere.** A blocking library call runs through `await asyncio.to_thread(...)`.
@@ -168,7 +168,7 @@ flowchart LR
 | Redis stream / consumer group / consumer | `events` / `writers` / `writer-1` |
 | Redis keys | [architecture/data-model.md](architecture/data-model.md) "Redis keys", plus `auth:{token_hash}` (session lookup cache, 60 s), `sites:version` (site cache invalidation) and `rl:login:{sha256(ip)[:16]}:{minute}` (5 logins a minute) |
 | Redis database for tests | 15 |
-| Drop reasons (header `X-Mieru-Dropped`, log and metric label) | `unknown_site`, `blocked`, `over_quota`, `bot`, `spam_referrer`, `rate_limited`, `backpressure`, `redis_unavailable` |
+| Drop reasons (header `X-Mieru-Dropped`, log and metric label) | `unknown_site`, `blocked`, `over_quota`, `no_salt`, `bot`, `spam_referrer`, `rate_limited`, `backpressure`, `redis_unavailable`: the `DropReason` literal in `mieru.ingest.pipeline` |
 | Session cookie | `mieru_session` |
 | Dev email outbox (when `RESEND_API_KEY` is empty) | `apps/backend/.outbox/` |
 
@@ -221,6 +221,8 @@ Fixed here so that tasks written weeks apart fit together. Specs use these names
 
 **Stream entry** (written by `ingest`, read by `writer`): fields `v` (format version), `site_id`, `org_id`, `ts` (ms), `n`, `u`, `r`, `ua`, `vid`, `pvid` (yesterday's visitor id), `cc` (country), `p` (props as JSON). A contract test builds an entry with the real ingest code and reads it with the real writer code (section 6).
 
+The model is `mieru.ingest.stream.StreamEntry`, and `STREAM = "events"`. `to_fields()` makes every value a string, as Redis stores it: `v` is `1`, `r` is `""` when the event had no referrer, `pvid` is `""` when yesterday's salt is missing, and `p` is compact JSON (`{"plan":"pro"}`, non-ASCII kept as is). `StreamEntry.from_fields(fields)` is the inverse, for the writer. `append(redis, entry)` is a plain `XADD` with no `MAXLEN`.
+
 **Session record** (`sess:{site_id}:{visitor_id}`): `sid`, `start`, `last`, `source`, `referrer`, `utm_*`, `cc`, `device`, `browser`, `os`.
 
 **Data rules**
@@ -252,7 +254,7 @@ Response shapes, in order: aggregate, timeseries, breakdown, realtime.
 
 `change` is `null` until comparison exists.
 
-**Error codes.** `mieru.core.errors` defines `not_found` (404), `conflict` (409), `unauthorized` (401), `forbidden` (403), `quota_exceeded` (402), `validation_failed` (422), `rate_limited` (429) and `internal_error` (500). Tasks add `invalid_domain`, `bad_origin` (403) and `stats_unavailable` (503). In production a 500 never shows internals; the response carries the `X-Request-Id`.
+**Error codes.** `mieru.core.errors` defines `not_found` (404), `conflict` (409), `unauthorized` (401), `forbidden` (403), `quota_exceeded` (402), `validation_failed` (422), `rate_limited` (429), `invalid_event` (400, a malformed ingest body) and `internal_error` (500). Tasks add `invalid_domain`, `bad_origin` (403) and `stats_unavailable` (503). In production a 500 never shows internals; the response carries the `X-Request-Id`.
 
 **Backend names fixed in advance**
 
@@ -322,7 +324,9 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 
 **Postgres fixtures** (`tests/integration/conftest.py`). `test_database` runs once per run, before the first integration test, without being asked for (`autouse=True`): it creates `mieru_test` if it's missing and runs `alembic upgrade head` on it. A test that asks for `db_session` gets a session on a connection whose outer transaction is rolled back when the test ends. The session joins that transaction with `join_transaction_mode="create_savepoint"`, so a `commit()` or `rollback()` in the code under test acts on a SAVEPOINT, and the test can check what a commit leaves behind. The limit: code that opens its own connection (an app's own engine) can't see the test's rows, so an API test must hand its route the test's session. The migration test works on a scratch database of its own, `mieru_test_migrations`, so going down and up never touches `mieru_test`.
 
-**ClickHouse fixtures** (same file). `ch_test_database` runs once per run without being asked for, and returns the time it started. It connects to the developer's database `mieru`, because a client can't connect to a database that doesn't exist, and from there drops and creates `mieru_test`. Then it runs `migrate` on `mieru_test`. `ch` is one `AsyncClient` for `mieru_test`, shared by the run. `site_id` gives each test the next number from 100,000 up. `make_event(site_id, **overrides)` builds a valid page view, and `insert_events(client, events)` inserts a list in one block, as the writer will. The runner's own test works on a scratch database, `mieru_test_migrations`, with its SQL files in `tmp_path`.
+**Ingest fixtures** (`tests/integration/ingest/conftest.py`). The ingest app loads its caches through its own engine, so it can't see a site the test added in `db_session`. A test that adds one calls `refresh()`, which runs `refresh_once` with the test's session on the app's own caches. `redis_db` empties Redis database 15 before the test. The app's startup commits today's and tomorrow's salts to `mieru_test` through its own engine, and those rows outlive the run, so salt tests use a day far from today (`date(2031, 3, 10)`).
+
+**ClickHouse fixtures** (`tests/integration/conftest.py`). `ch_test_database` runs once per run without being asked for, and returns the time it started. It connects to the developer's database `mieru`, because a client can't connect to a database that doesn't exist, and from there drops and creates `mieru_test`. Then it runs `migrate` on `mieru_test`. `ch` is one `AsyncClient` for `mieru_test`, shared by the run. `site_id` gives each test the next number from 100,000 up. `make_event(site_id, **overrides)` builds a valid page view, and `insert_events(client, events)` inserts a list in one block, as the writer will. The runner's own test works on a scratch database, `mieru_test_migrations`, with its SQL files in `tmp_path`.
 
 ClickHouse has no cheap rollback, and truncating per test costs tens of milliseconds. Every real query filters by `site_id` anyway, so a unique id per test is free isolation. The database is recreated, not truncated, because of the dedup window: ClickHouse may drop a block identical to one it stored before, and `TRUNCATE` is not sure to clear that memory. Tests with a frozen clock and a counter that restarts at 100,000 insert identical blocks run after run.
 
@@ -332,7 +336,7 @@ ClickHouse has no cheap rollback, and truncating per test costs tens of millisec
 - Cases worth a test: 23:59:59 to 00:00:00 UTC (salts); a 29- vs 31-minute gap (sessions); a UTC timestamp that falls on another date in the site's timezone (timeseries buckets); a daylight-saving change in `Europe/Kyiv`.
 - Factories in `tests/factories.py` build valid objects with overridable defaults, so a test states only what matters to it.
 - Stats tests use `mieru.tools.seed` with a fixed seed and small counts, so the answers are known ("300 page views, 100 visitors").
-- Property tests (hypothesis) for parsers and the hash: URL and UTM parsing, source classification, domain normalisation, the filter parser, `visitor_id`, and "any request body either validates or raises `ValidationError`, never a 500".
+- Property tests (hypothesis) for parsers and the hash: URL and UTM parsing, source classification, domain normalisation, the filter parser, `visitor_id`, and "any request body either parses or raises `InvalidEvent`, never a 500".
 
 ### 6.5 The two most important tests
 
@@ -409,10 +413,10 @@ Privacy is the product's main promise, so it gets tests like any other feature.
 
 ### 7.2 Ingest, the public edge
 
-- **Limits:** body up to 8 KB, name up to 120 characters, URL up to 2,000, up to 30 props, prop keys up to 64 and values up to 2,000 characters. Anything else gets `400`.
+- **Limits:** body up to 8 KB, name up to 120 characters, domain up to 253, URL up to 2,000 and starting `http://` or `https://`, referrer up to 2,000, up to 30 props, prop keys 1 to 64 and values up to 2,000 characters, and prop values only strings. Anything else gets `400 invalid_event`. `MAX_BODY_BYTES` and `IngestEvent` in `mieru.ingest.pipeline` hold them.
 - **Cheap checks first:** unknown or blocked sites, bots and spam are dropped in memory, before any Redis call.
 - **Always `202`** for a well-formed request, with `X-Mieru-Dropped` when dropped, so nobody can probe which domains are registered.
-- **Client IP** comes only from the `X-Real-IP` header that Caddy sets. Client-sent `X-Forwarded-For` is ignored.
+- **Client IP** comes only from the `X-Real-IP` header that Caddy sets, or from the TCP peer when there is no Caddy (a local run). `X-Forwarded-For` and `Forwarded` are never read, and in production (`compose.prod.yaml`) uvicorn runs with `--no-proxy-headers`, so it doesn't rewrite the peer from them. The local command in `CLAUDE.md` leaves the flag out, so a local request with `X-Forwarded-For` and no `X-Real-IP` gets the forwarded address as its peer.
 - **The IP is used for one request** (visitor id, country) and never stored or logged.
 - **Load-test headers** *(after MVP)* work only when `LOADTEST_SECRET` is set, compared with `hmac.compare_digest`.
 - **Accepted risk:** anyone can send real-looking events for a registered domain, as with every script-based analytics product. Rate limits and bot filters bound the damage.

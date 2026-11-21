@@ -109,7 +109,8 @@ Decisions worth noting:
 5. **`sites.domain` is unique and stored normalized** (lowercase, without a leading `www.`; [conventions.md](../conventions.md) section 5), so `WWW.Example.com` and `example.com` collide. Deleting an organization deletes its sites (`ON DELETE CASCADE`).
 6. **`created_at` is set by the application** from `mieru.core.clock.now()`, not by a database default, so tests can freeze it. A raw `INSERT` must supply it.
 7. **Every constraint is named by a convention** on `Base.metadata`: `pk_sites`, `uq_sites_domain`, `ck_sites_status`, `fk_sites_organization_id_organizations`, `ix_sites_organization_id`. A later migration can then drop or change a constraint by a name it knows, on every database.
-8. **`salts` has one row per UTC day**, shared by every site: `day` is the key, and a CHECK keeps `salt` at exactly 16 bytes. When rows are created and deleted: [privacy.md](privacy.md), "Salt lifecycle".
+8. **`salts` has one row per UTC day**, shared by every site: `day` is the key, and a CHECK keeps `salt` at exactly 16 bytes. When rows are created and deleted: [privacy.md](privacy.md), "Salt lifecycle". The key also makes creation safe to race: `repositories.salts.insert_salt` is `INSERT ... ON CONFLICT (day) DO NOTHING`, so the first salt written for a day is the one every process reads.
+9. **`ingest` reads every site** (`repositories.sites.list_all_sites`), across all organizations, to fill its in-memory cache. It is the one query not scoped by organization or site ([conventions.md](../conventions.md) section 2), and its rows never leave `ingest`.
 
 ## ClickHouse (events)
 
@@ -206,7 +207,7 @@ FROM (
 
 | Key | Type | Purpose | Lifetime |
 |---|---|---|---|
-| `events` | Stream + one consumer group | Buffer between `ingest` and `writer` | Entry deleted after acknowledgement |
+| `events` | Stream + one consumer group | Buffer between `ingest` and `writer`. Entry fields: [conventions.md](../conventions.md) section 5 | Entry deleted after acknowledgement. Never trimmed: `XADD` runs without `MAXLEN`, which would delete entries the writer hasn't stored |
 | `sess:{site_id}:{visitor_id}` | Hash | Session id, start, first-touch attributes | 30 min, reset on each event |
 | `rl:{site_id}:{minute}` | Counter | Per-site rate limit | 2 min |
 | `usage:{org_id}:{yyyymm}` | Counter | *(after MVP)* Events accepted this month | 60 days |

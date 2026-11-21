@@ -2,7 +2,7 @@
 id: T07
 title: Ingest core
 mode: human
-status: build
+status: done
 features: [I1]
 depends: [T05]
 branch: t07-ingest-core
@@ -107,10 +107,38 @@ Nothing beyond the standard checks.
 5. The same `curl` with `"d":"nope.test"`: `202` with `x-mieru-dropped: unknown_site`, and still one entry. Clean up with `docker compose exec redis redis-cli DEL events`.
 
 ## Where to debug
-Written before the developer's test.
+Paths are under `apps/backend/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Kept or dropped, and why | `src/mieru/ingest/pipeline.py:85` (`process`), the salt check on line 95 | the Cursor config `ingest` and the curl from "Test it yourself", once with `"d":"nope.test"` | `site` is `None` for an unknown domain (`sites.get` normalizes first). `today` comes from `now`, the server's clock, so a missing `salts.get(today)` means the refresh hasn't run for the new day yet. From outside, the `X-Mieru-Dropped` header names the branch taken |
+| Which IP feeds the hash | `src/mieru/ingest/routes.py:76` (`client_ip`) | `ingest` and the curl with and without `-H 'X-Real-IP: 203.0.113.9'` | `real_ip` wins when set; otherwise `request.client.host`. The `ingest` config runs uvicorn without `--no-proxy-headers`, so a local curl with `X-Forwarded-For` and no `X-Real-IP` rewrites `request.client`; production passes the flag (`compose.prod.yaml`) |
+| Malformed or over the limit: `400` | `src/mieru/ingest/pipeline.py:55` (`parse_event`), the `ValidationError` on line 59 | the Cursor config `pytest: -k` with `invalid_fields` | `body` is the raw bytes, whatever the content type. A `ValidationError` becomes `InvalidEvent` with `from None`, so the input never reaches the error or the log. `read_body` (`routes.py:62`) stops reading once past 8 KB |
+| The Redis append, and `redis_unavailable` | `src/mieru/ingest/routes.py:54` (`stream.append`), the `except RedisError` on line 55 | `pytest: -k` with `redis_unavailable`, or `docker compose stop redis` with `ingest` running | `result.entry.to_fields()` shows exactly what Redis gets: no IP anywhere. With Redis down the client raises `ConnectionError`, a `RedisError`, and the app pane shows `event_dropped` with `error_type=ConnectionError` |
+| The caches at startup and every 30 s | `src/mieru/ingest/app.py:44` (`refresh_once` before serving, inside a 10 s timeout); `src/mieru/ingest/refresh.py:49` (the loop) | `ingest` with `docker compose stop postgres` before the start (it fails), or after it (`cache_refresh_failed` within 30 s) | `day_salts` in `refresh_once` (`refresh.py:28`) holds yesterday's salt only when it exists. A failed refresh keeps the old caches: events still get `202` without a drop header |
 
 ## Notes
 - The PR is at the top of the size guide (about 450 lines of code plus tests). Splitting it would leave a half-built endpoint on `main`.
 - The existing readiness test stays as it is: startup fails without Postgres instead of reporting a cache state.
+- The salt tests pass `now=` straight to the pure `process()` instead of using `time-machine`; criterion 8 is covered just the same. `time-machine` freezes the clock in the integration test for criterion 1.
+- `"p": null` is refused while `"r": null` is accepted (review nit 11): the T09 tracker omits `p` when there are no props.
+- Run 2: the developer chose to carry the roadmap's T20 and T21 mode change (agent to human) in this task's commit.
 
 ## Review
+**Reviewer, 2026-11-21:** 0 must-fix, 5 should-fix, 7 nits.
+1. [should-fix, fixed] `apps/backend/src/mieru/ingest/app.py:43`: the startup refresh had no timeout, so a Postgres connection that stops answering hung the start instead of failing it. It now runs inside `asyncio.timeout(REFRESH_TIMEOUT_S)`.
+2. [should-fix, fixed] `apps/backend/src/mieru/ingest/routes.py:55`: a Redis failure dropped the event with no trace until T12's counters. It now logs `event_dropped` with the reason and the error type, and `test_redis_unavailable_still_answers_202` asserts the log line.
+3. [should-fix, fixed] `apps/backend/tests/integration/ingest/test_event.py:72`: the `over_8_kb` case wasn't JSON, so it passed even with both size caps removed. It is now a valid event padded past `MAX_BODY_BYTES`, and goes red (`202 == 400`) without the cap.
+4. [should-fix, fixed] `apps/backend/tests/unit/ingest/test_pipeline.py:129,136`, `test_visitor.py:19,29`: hypothesis ran without a fixed seed (conventions 6.6). Each `@given` now has `@settings(derandomize=True)`.
+5. [should-fix, fixed] `docs/conventions.md` 6.3: "ClickHouse fixtures (same file)" pointed at the new ingest conftest. It names `tests/integration/conftest.py` now.
+6. [nit, fixed] `docs/conventions.md` 6.4: the property test named `ValidationError`; it is `InvalidEvent`.
+7. [nit, fixed] `docs/architecture/write-path.md`: "a Postgres outage never stops collection" overstated it. The cached salts last until the end of tomorrow.
+8. [nit, fixed] `docs/architecture/write-path.md`, `docs/conventions.md` 7.2: `--no-proxy-headers` is set in production only; the docs say so.
+9. [nit, fixed] `docs/architecture/decisions.md` row 41: dropped the OpenAPI cost, since ingest has no OpenAPI.
+10. [nit, left] `apps/backend/tests/integration/ingest/test_refresh.py:32`: `salts.get(DAY) is not None` could compare the cache with the committed salts.
+11. [nit, left] `apps/backend/src/mieru/ingest/pipeline.py:50`: `"p": null` gets `400`, while `"r": null` is accepted.
+12. [nit, left] (design) `docs/conventions.md` 7.2: "so nobody can probe which domains are registered" holds only for browsers, which can't read the header without `Access-Control-Expose-Headers`; a `curl` user can.
+
+**Verifier, 2026-11-21: DONE**, before and after the fixes. 1-11 pass (exit 0) · 12 human: confirmed in run 2, and reproduced by the first verification on Redis db 15 · I1 check exit 0 · Scope clean · Test integrity clean.
+
+**Done, 2026-11-21:** the developer ran "Test it yourself" and confirmed it with `/task T07`. Final verdict DONE; I1 passes.
