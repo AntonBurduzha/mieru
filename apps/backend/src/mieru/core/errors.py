@@ -70,6 +70,11 @@ class RateLimited(AppError):
   status_code = 429
 
 
+class InvalidEvent(AppError):
+  code = "invalid_event"
+  status_code = 400
+
+
 _HTTP_CODES = {404: "not_found", 405: "method_not_allowed"}
 
 

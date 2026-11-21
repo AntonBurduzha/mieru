@@ -37,7 +37,7 @@
     "scope": "mvp",
     "task": "T07",
     "check": "uv run --directory apps/backend pytest tests/unit/ingest tests/integration/ingest -k unknown_site",
-    "passes": false
+    "passes": true
   },
   {
     "id": "I2",
