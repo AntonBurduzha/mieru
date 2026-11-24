@@ -60,6 +60,14 @@ Nothing in this list waits on Postgres or ClickHouse. If both are down, ingest k
 
 The raw user agent sits in the stream for about a second and is not stored in ClickHouse.
 
+**Built so far** (T08): steps 1, 5 and 6, without the usage counters. `python -m mieru.writer` reads as consumer `writer-1` of group `writers` (`mieru.writer.consumer`):
+- **The group.** At startup `ensure_group` runs `XGROUP CREATE events writers 0 MKSTREAM`, so entries that ingest wrote before the writer's first start are read too. If Redis can't be reached, the process exits 1 and Docker restarts it. A `NOGROUP` reply later (the stream was deleted) creates the group again.
+- **A batch.** Each cycle first reads the consumer's own pending entries (id `0`) and returns them as they are, never topped up, so a retried batch is the same batch. With none pending, it reads new entries (`>`) until it holds `WRITER_BATCH_MAX` (5,000) or `WRITER_FLUSH_MS` (1,000) has passed since the first one arrived. No blocking read waits longer than 1 s, which keeps it under the Redis client's 2 s socket timeout and lets a stop be seen within a second.
+- **Rows.** The pure steps `mieru.writer.batch.build_batch` and `mieru.writer.enrich.to_row` turn entries into `EventRow`s: host and path from the URL, the timestamp from `ts`, and no `ua` or `org_id`. Until T13 the enrichment columns are `''`; until T14 `session_id` is `0` and `session_start` is the event's time. An entry that doesn't parse is acknowledged, deleted and logged as `entry_invalid` with its id and the error type, so it can't block the stream. It isn't moved to a dead-letter stream, which would keep its raw user agent in Redis.
+- **Insert, then acknowledge.** One `INSERT` per batch (`mieru.writer.inserter.insert_rows`) carries the dedup token, then `XACK` and `XDEL` of every id in the batch go in one `MULTI`. The cycle logs `batch_inserted` with `rows`, `invalid` and `ms`.
+- **Failure.** A failed cycle acknowledges nothing, logs `batch_failed` with the error type and `retry_in_s`, and waits 1, 2, 4 ... up to 30 s before it tries again.
+- **Stop.** SIGTERM or SIGINT stops the collecting. The writer stores and acknowledges what it holds, closes its clients, logs `shutdown_complete` and exits 0. A stop during a backoff pause ends the pause, and the batch stays pending for the next start.
+
 ## Buffering and backpressure
 
 The stream is the shock absorber between a spiky input and a database that wants steady batches.
@@ -73,6 +81,6 @@ The stream is the shock absorber between a spiky input and a database that wants
 
 The pipeline is **at-least-once**: an entry is deleted from the stream only after ClickHouse confirms the insert. The one failure that causes a repeat is "insert succeeded, acknowledgement did not" (the writer crashes in between).
 
-Planned fix, to be proven by a test during the build: the writer re-reads its unacknowledged entries on restart, which reproduces the same batch, and sends it with an `insert_deduplication_token` derived from the first and last stream ids. ClickHouse then ignores a batch it has already stored. Session assignment is safe to repeat because the Redis session record holds only the id, the start time and first-touch attributes, no counters.
+The fix (T08): the writer re-reads its unacknowledged entries on restart, which reproduces the same batch, and sends it with `insert_deduplication_token` set to `<first stream id>:<last stream id>`. ClickHouse then ignores a batch it has already stored, within the table's window of the last 1,000 blocks. The same rows under two different tokens are stored twice, so two different batches with identical rows both count. Session assignment (T14) is safe to repeat because the Redis session record holds only the id, the start time and first-touch attributes, no counters. T14's writer crash test proves the whole path end to end.
 
-Without the token the fallback is to accept rare duplicates, which is what most analytics pipelines do.
+A SIGKILL in the middle of an insert loses nothing either: the batch stays pending, and the token makes the retry a no-op.

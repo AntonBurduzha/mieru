@@ -39,6 +39,7 @@ From `apps/backend`:
 - `uv run ruff check --fix . && uv run ruff format . && uv run mypy src tests`
 - `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000`
 - `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001`
+- `uv run python -m mieru.writer`: the writer, from the stream into ClickHouse; Ctrl+C stops it cleanly
 
 From the repo root:
 - `docker compose up -d`: Postgres, Redis, ClickHouse

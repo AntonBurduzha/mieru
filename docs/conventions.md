@@ -66,12 +66,12 @@ mieru/
     │   │   ├── services/     # business rules: sites and salts, then auth
     │   │   ├── api/          # dashboard API: app.py, deps.py, routes/
     │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, refresh, stream
-    │   │   ├── writer/       # (later) __main__, consumer, enrich, useragent, sources, sessions, inserter
+    │   │   ├── writer/       # __main__, consumer, batch, enrich, inserter; later useragent, sources, sessions
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
     │   │   ├── worker/       # (later) __main__ with the scheduler loop, tasks
     │   │   └── tools/        # command-line tools: create_site.py, ch_migrate.py, later seed.py
     │   └── tests/
-    │       ├── factories.py  # make_organization, make_site, make_event: valid rows with overridable defaults
+    │       ├── factories.py  # make_organization, make_site, make_event, make_entry: valid objects with overridable defaults
     │       ├── unit/         # no I/O, milliseconds
     │       ├── integration/  # real Postgres, Redis and ClickHouse from compose
     │       └── e2e/          # (later) the whole pipeline: payload -> ClickHouse -> stats API
@@ -117,7 +117,8 @@ flowchart LR
     S --> ST["stats<br/>ClickHouse queries"]
     I["ingest/routes"] --> PL["ingest/pipeline<br/>pure steps"]
     PL --> SR["ingest/stream<br/>Redis"]
-    W["writer/consumer<br/>loop"] --> E["writer/enrich<br/>pure steps"]
+    W["writer/consumer<br/>loop"] --> B["writer/batch<br/>pure steps"]
+    B --> E["writer/enrich<br/>pure steps"]
     W --> IN["writer/inserter<br/>ClickHouse"]
 ```
 
@@ -138,7 +139,7 @@ flowchart LR
 |---|---|---|---|
 | `api` | `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000` | 8000 | yes |
 | `ingest` | `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001` | 8001 | yes |
-| `writer` | `uv run python -m mieru.writer` | none | later |
+| `writer` | `uv run python -m mieru.writer` | none | yes |
 | `worker` | `uv run python -m mieru.worker` (an asyncio scheduler loop; no task queue in the MVP) | none | later |
 | `web` | `pnpm --dir apps/web dev` (Vite; proxies `/api` to port 8000) | 3000 | later |
 | Postgres, Redis, ClickHouse | `docker compose up -d` from the repo root | 5432, 6379, 8123 | yes |
@@ -324,9 +325,13 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 
 **Postgres fixtures** (`tests/integration/conftest.py`). `test_database` runs once per run, before the first integration test, without being asked for (`autouse=True`): it creates `mieru_test` if it's missing and runs `alembic upgrade head` on it. A test that asks for `db_session` gets a session on a connection whose outer transaction is rolled back when the test ends. The session joins that transaction with `join_transaction_mode="create_savepoint"`, so a `commit()` or `rollback()` in the code under test acts on a SAVEPOINT, and the test can check what a commit leaves behind. The limit: code that opens its own connection (an app's own engine) can't see the test's rows, so an API test must hand its route the test's session. The migration test works on a scratch database of its own, `mieru_test_migrations`, so going down and up never touches `mieru_test`.
 
-**Ingest fixtures** (`tests/integration/ingest/conftest.py`). The ingest app loads its caches through its own engine, so it can't see a site the test added in `db_session`. A test that adds one calls `refresh()`, which runs `refresh_once` with the test's session on the app's own caches. `redis_db` empties Redis database 15 before the test. The app's startup commits today's and tomorrow's salts to `mieru_test` through its own engine, and those rows outlive the run, so salt tests use a day far from today (`date(2031, 3, 10)`).
+**Ingest fixtures** (`tests/integration/ingest/conftest.py`). The ingest app loads its caches through its own engine, so it can't see a site the test added in `db_session`. A test that adds one calls `refresh()`, which runs `refresh_once` with the test's session on the app's own caches. The app's startup commits today's and tomorrow's salts to `mieru_test` through its own engine, and those rows outlive the run, so salt tests use a day far from today (`date(2031, 3, 10)`).
 
-**ClickHouse fixtures** (`tests/integration/conftest.py`). `ch_test_database` runs once per run without being asked for, and returns the time it started. It connects to the developer's database `mieru`, because a client can't connect to a database that doesn't exist, and from there drops and creates `mieru_test`. Then it runs `migrate` on `mieru_test`. `ch` is one `AsyncClient` for `mieru_test`, shared by the run. `site_id` gives each test the next number from 100,000 up. `make_event(site_id, **overrides)` builds a valid page view, and `insert_events(client, events)` inserts a list in one block, as the writer will. The runner's own test works on a scratch database, `mieru_test_migrations`, with its SQL files in `tmp_path`.
+**Redis fixtures** (`tests/integration/conftest.py`). `redis_db` empties Redis database 15 before the test and hands over a client for it: the database the ingest app and the writer under test use. `make_entry(site_id, **overrides)` in `tests/factories.py` builds a valid stream entry, for the writer's tests.
+
+**Waiting for another process** (`tests/integration/conftest.py`). `await eventually(check, *, timeout_s=5)` polls an async `check()` every 50 ms until it returns true, and raises `TimeoutError` after `timeout_s`. The writer's subprocess test uses it to wait until its entries are pending before it sends SIGTERM (section 6.6). The name isn't `timeout` because ruff's ASYNC109 refuses an async parameter called that.
+
+**ClickHouse fixtures** (`tests/integration/conftest.py`). `ch_test_database` runs once per run without being asked for, and returns the time it started. It connects to the developer's database `mieru`, because a client can't connect to a database that doesn't exist, and from there drops and creates `mieru_test`. Then it runs `migrate` on `mieru_test`. `ch` is one `AsyncClient` for `mieru_test`, shared by the run. `site_id` gives each test the next number from 100,000 up. `make_event(site_id, **overrides)` builds a valid page view, and `insert_events(client, events)` inserts a list in one block, as the writer does. The runner's own test works on a scratch database, `mieru_test_migrations`, with its SQL files in `tmp_path`.
 
 ClickHouse has no cheap rollback, and truncating per test costs tens of milliseconds. Every real query filters by `site_id` anyway, so a unique id per test is free isolation. The database is recreated, not truncated, because of the dedup window: ClickHouse may drop a block identical to one it stored before, and `TRUNCATE` is not sure to clear that memory. Tests with a frozen clock and a counter that restarts at 100,000 insert identical blocks run after run.
 
@@ -346,7 +351,7 @@ ClickHouse has no cheap rollback, and truncating per test costs tens of millisec
 
 ### 6.6 Flaky tests and coverage
 
-- No `sleep` to wait for something. Poll with a timeout: `await eventually(lambda: count_rows(...) == 5, timeout=5)`.
+- No `sleep` to wait for something. Poll with a timeout: `await eventually(check, timeout_s=5)`, where `check` is an async function that returns `True` once the state is there (section 6.3).
 - Fixed seeds for random data and hypothesis. No shared state between tests.
 - A flaky test is a bug. Fix it in the same task, or skip it with `reason="flaky: <issue link>"` and an open issue. A skip lives a week at most.
 - Coverage is a flashlight, not a goal: aim for 90% in `ingest/`, `writer/` and `stats/`, 85% in `services/`, 80% overall. A CI floor of `--cov-fail-under=80` is added once services exist.

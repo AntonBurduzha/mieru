@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from itertools import count
@@ -12,11 +12,12 @@ from alembic.config import Config
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from fastapi import FastAPI
 from pydantic import AnyHttpUrl, PostgresDsn, RedisDsn, Secret
+from redis.asyncio import Redis
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from mieru.api.app import create_app as create_api_app
-from mieru.core import clock
+from mieru.core import clock, redis
 from mieru.core.clickhouse import ClickHouse
 from mieru.core.config import Settings, get_settings
 from mieru.db.session import make_engine
@@ -179,3 +180,20 @@ async def ingest_client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
   """A client for an ingest app"""
   async with serve(create_ingest_app(settings)) as client:
     yield client
+
+
+@pytest.fixture
+async def redis_db(settings: Settings) -> AsyncIterator[Redis]:
+  """Redis database 15, emptied before the test: the one the apps under test use"""
+  client = redis.connect(settings)
+  await client.flushdb()
+  yield client
+  await client.aclose()
+
+
+async def eventually(check: Callable[[], Awaitable[bool]], *, timeout_s: float = 5) -> None:
+  """Poll check() until it is true; raise TimeoutError after timeout_s seconds."""
+  async with asyncio.timeout(timeout_s):
+    # Another process changes the state, so there is no event to wait on
+    while not await check():  # noqa: ASYNC110
+      await asyncio.sleep(0.05)

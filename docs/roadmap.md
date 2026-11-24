@@ -10,9 +10,9 @@
 
 | | |
 |---|---|
-| **Next** | T08 (human) |
+| **Next** | T09 (agent) |
 | **Open questions** | IPv6: T03 publishes no AAAA record, so every visitor connects over IPv4; IPv6 on `edge` waits for T26. Rollback across a migration: `alembic upgrade head` on a commit older than the database fails; decide before T16 adds the second migration |
-| **Updated** | 2026-11-21 |
+| **Updated** | 2026-11-24 |
 
 ---
 
@@ -51,7 +51,7 @@
 | T05 | **Postgres layer.** SQLAlchemy async models and sessions, Alembic, tables `organizations`, `sites`, `salts`; the test database with rollback per test; factories; a tool to create an organization and a site from the command line (until there are accounts) | human | | T01 | done |
 | T06 | **ClickHouse schema.** The `events` table and the migration runner (`mieru.tools.ch_migrate`), the test database, and site-id isolation in tests | human | | T01 | done |
 | T07 | **Ingest core.** Body validation and limits, the site cache, daily salts and the visitor hash, `202` with `X-Mieru-Dropped: unknown_site`, `XADD` to the stream, and the IP never leaving the request | human | I1 | T05 | done |
-| T08 | **Writer core.** Consumer group, batches by size or time, insert into ClickHouse with a dedup token, acknowledge only after the insert, clean shutdown on SIGTERM | human | | T06, T07 | build |
+| T08 | **Writer core.** Consumer group, batches by size or time, insert into ClickHouse with a dedup token, acknowledge only after the insert, clean shutdown on SIGTERM | human | | T06, T07 | done |
 | T09 | **Tracker.** Page view on load, SPA navigation, custom events with the queue, refusing `file:` pages and automated browsers, the 1 KB budget in CI, a Playwright page test | agent | T1-T4 (with T11) | | todo |
 | T10 | **Worker and salt rotation.** `python -m mieru.worker`: an asyncio loop that creates tomorrow's salt at 23:00 UTC and deletes salts older than 48 hours | agent | | T05 | todo |
 | T11 | **Pipeline test and first real traffic.** `tests/e2e/test_pipeline.py` in CI, the seed tool, writer and worker in the production stack, the script installed on your own sites | agent | T1-T4 | T04, T08, T09, T10 | todo |

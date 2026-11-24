@@ -2,7 +2,7 @@
 id: T08
 title: Writer core
 mode: human
-status: build
+status: done
 features: []
 depends: [T06, T07]
 branch: t08-writer-core
@@ -40,7 +40,7 @@ branch: t08-writer-core
 - **Files allowed to change:**
   - `apps/backend/src/mieru/writer/`: new `__init__.py`, `__main__.py`, `consumer.py`, `batch.py`, `enrich.py`, `inserter.py`
   - `.vscode/launch.json` (the `writer` config)
-  - Tests: `apps/backend/tests/unit/writer/test_{enrich,batch,main}.py`, `apps/backend/tests/unit/contracts/test_stream_entry.py`, `apps/backend/tests/integration/writer/test_{consumer,inserter,main}.py`, `apps/backend/tests/integration/conftest.py` (gains `redis_db` and `eventually`), `apps/backend/tests/integration/ingest/conftest.py` (`redis_db` moves out), `apps/backend/tests/factories.py` (`make_entry`)
+  - Tests: `apps/backend/tests/unit/writer/test_{enrich,batch,main}.py`, `apps/backend/tests/unit/contracts/test_stream_entry.py`, `apps/backend/tests/integration/writer/test_{consumer,inserter,main}.py`, `apps/backend/tests/integration/conftest.py` (gains `redis_db` and `eventually`), `apps/backend/tests/integration/ingest/conftest.py` (`redis_db` moves out), `apps/backend/tests/factories.py` (`make_entry`), `apps/backend/tests/integration/clickhouse/test_events_schema.py` (a comment that gives the token to T14)
   - Docs (Claude, in run 2): `docs/architecture/{write-path,data-model,decisions}.md`, `docs/conventions.md`, `docs/workflow.md` (section 10), `CLAUDE.md` (Commands)
 
 ## Interfaces
@@ -55,7 +55,7 @@ branch: t08-writer-core
     - no field holds `ua` or `org_id`.
 - **`mieru.writer.batch`** (pure):
   - `RawEntry = tuple[str, Mapping[str, str]]`, a stream id and its fields;
-  - `Batch` (frozen dataclass) with `ids` (every entry read, in stream order), `rows` and `invalid` (the ids of entries that didn't parse), and a `token` property, `f"{ids[0]}:{ids[-1]}"`;
+  - `Batch` (frozen dataclass) with `ids` (every entry read, in stream order), `rows` and `invalid` (an `(id, error type)` pair for each entry that didn't parse), and a `token` property, `f"{ids[0]}:{ids[-1]}"`;
   - `build_batch(entries: Sequence[RawEntry]) -> Batch`: `StreamEntry.from_fields`, then `to_row`. Any exception puts the id in `invalid`;
   - `backoff_s(failures: int) -> float`: 1, 2, 4 ... up to 30.
 - **`mieru.writer.inserter`:** `COLUMNS = tuple(EventRow.model_fields)`. `async insert_rows(client: AsyncClient, rows: Sequence[EventRow], *, token: str) -> None` runs one `INSERT INTO events` with `settings={"insert_deduplication_token": token}`.
@@ -93,7 +93,7 @@ branch: t08-writer-core
 - `tests/integration/writer/test_consumer.py`: criteria 1-5 and 7. Rows are counted by the test's `site_id`. The unreachable ClickHouse is a `ClickHouse` whose `clickhouse_url` points at port 1.
 - `tests/integration/writer/test_inserter.py`: criteria 6 and 9
 - `tests/integration/writer/test_main.py`: criterion 10. It runs the module in a subprocess, with the test settings (`ENV=test`, Redis database 15, `mieru_test`) and `WRITER_FLUSH_MS=10000` in its environment, and uses `eventually` to wait until the entries are pending before it sends the signal.
-- Shared fixtures: `redis_db` moves from `tests/integration/ingest/conftest.py` to `tests/integration/conftest.py`, which also gains `async eventually(check, *, timeout=5)`. `tests/factories.py` gains `make_entry(site_id, **overrides) -> StreamEntry`.
+- Shared fixtures: `redis_db` moves from `tests/integration/ingest/conftest.py` to `tests/integration/conftest.py`, which also gains `async eventually(check, *, timeout_s=5)` (ruff's ASYNC109 refuses a parameter named `timeout`). `tests/factories.py` gains `make_entry(site_id, **overrides) -> StreamEntry`.
 
 ## Proof of done
 Nothing beyond the standard checks.
@@ -106,13 +106,36 @@ Nothing beyond the standard checks.
 5. Press Ctrl+C in the writer pane: `shutdown_complete`, and `echo $?` prints `0`.
 
 ## Where to debug
-Written in run 2, from the developer's code.
+Paths are under `apps/backend/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Insert first, acknowledge after | `src/mieru/writer/consumer.py:93` (`insert_rows` in `run_once`), the `acknowledge` on line 95 | the Cursor config `writer` and the curl from "Test it yourself"; or `pytest: -k` with `failed_insert` | `batch.token` is `<first id>:<last id>`, and `batch.ids` holds the invalid ids too. With ClickHouse down, line 93 raises and line 95 never runs: `XPENDING events writers` still counts the entries |
+| A retry or a new batch | `src/mieru/writer/consumer.py:40` (`read_batch`, the pending read), the collect loop on line 47 | `writer` with `docker compose stop clickhouse`, one curl, then `start`; or `pytest: -k` with `by_size` or `by_time` | `pending` is non-empty only after a failed cycle, and it comes back untopped, so the token repeats. In the loop, `left_ms` falls to 0 after `flush_ms`; `stop.is_set()` ends it early on SIGTERM |
+| Failure and backoff | `src/mieru/writer/consumer.py:115` (`run_forever`, the `except`), the pause on line 121 | `writer` with ClickHouse stopped | `failures` and `delay` go 1, 2, 4 ... 30 and reset after a good cycle. Ctrl+C during the pause wakes `stop.wait()` and the loop ends |
+| Host and path from the URL | `src/mieru/writer/enrich.py:65` (`split_url`), called from `to_row` on line 40 | `pytest: -k` with `host_and_path` or `any_url_that_ingest_accepts` | `parsed.hostname` drops the port and lowercases only up to a `%`, hence the `.lower()`. A `ValueError` from `urlsplit` gives `''` and `/` |
+| Stop and startup | `src/mieru/writer/__main__.py:22` (the signal handlers), `ensure_group` on line 30 | `writer`, then Ctrl+C; or `pytest: -k` with `sigterm` or `no_redis` | A signal only sets `stop`; the batch in hand is still stored. With Redis down, line 30 raises and the process exits 1 before `startup_complete` |
 
 ## Notes
 - The dedup token moved here from T14 (the developer's choice, at the spec). T14 keeps the crash test that proves it end to end.
+- Claude wrote the tests and the shared fixtures before the build (human mode, from 2026-11-22); the developer writes the code that turns them green.
 - One writer in the MVP, so every pending entry belongs to `writer-1`. A second writer would need `XAUTOCLAIM`.
 - `session_id = 0` marks rows written before T14. The `sessions` view that T14 adds sees only later inserts.
 - An invalid entry is dropped, not moved to a dead-letter stream, because a dead-letter copy would keep the raw user agent in Redis (conventions 7.6, guarantee 4).
+- Found while preparing the build: `urlsplit(...).hostname` lowercases only up to a `%`, so `to_row` lowercases again (hypothesis found `http://%A`); the driver reads `FixedString(2)` back as `bytes`; redis-py types the RESP3 reply of `XREADGROUP` as a dict but returns the list shape, hence a `cast`. Without a token, ClickHouse already drops an identical block, so two different batches with identical rows lose one (criterion 6 shows it).
+- The developer's comment on `stream_high_water` in `core/config.py` was outside the allowed files, and it described the writer lagging rather than ingest dropping. Reverted at the developer's choice.
 - For T11: give the writer's container a stop grace period longer than one insert (the client's `send_receive_timeout` is 30 s). A SIGKILL in the middle of an insert loses nothing: the batch stays pending, and the token makes the retry a no-op.
 
 ## Review
+**Reviewer, 2026-11-24:** 0 must-fix, 0 should-fix, 6 nits.
+1. [nit, left] `apps/backend/src/mieru/writer/enrich.py:69`: `if parsed:` is always true (a `SplitResult` is a 5-tuple), so `split_url` reads as if it could fall off the end.
+2. [nit, left] `apps/backend/src/mieru/writer/__main__.py:30`: an unreachable Redis exits 1 through a plain traceback, not a `startup_failed` log line.
+3. [nit, left] `apps/backend/tests/integration/writer/test_consumer.py:185`: the no-field-values check looks only for the user agent, not `u` or `r`.
+4. [nit, fixed] `docs/architecture/data-model.md`: `ZZ` comes from ingest's `cc`, not from the writer.
+5. [nit, fixed] `docs/conventions.md` section 2: the layering diagram gains `writer/batch`.
+6. [nit, fixed] the spec: "Where to debug" written.
+Also left: the typo "enties" at `apps/backend/src/mieru/writer/batch.py:23`, and `count_rows` copied in three writer integration tests.
+
+**Verifier, 2026-11-24: DONE.** 1-11 pass (exit 0) · 12 human: confirmed in run 2 · ruff, mypy and `pytest` (213 passed) exit 0 · Scope clean (the out-of-scope comment in `core/config.py` was reverted at the developer's choice) · Test integrity clean. Re-run after the doc fixes: DONE again, and every "Where to debug" line checked.
+
+**Done, 2026-11-24:** the developer ran "Test it yourself" and confirmed it with `/task T08`. Final verdict DONE.
