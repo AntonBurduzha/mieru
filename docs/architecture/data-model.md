@@ -153,7 +153,8 @@ SETTINGS non_replicated_deduplication_window = 1000;
 - **Session attributes on every row** trade disk (cheap, and repeated values compress to almost nothing) for never needing a join.
 - **`DateTime('UTC')`**, not plain `DateTime`, so the server's timezone never changes how a timestamp is read or written.
 - **`non_replicated_deduplication_window = 1000`** makes ClickHouse remember the last 1000 inserted blocks and drop a repeat of one, so a batch the writer retries is stored once ([write-path.md](write-path.md), "Delivery guarantees").
-- **The enrichment columns exist from the start.** Until T13 enriches events, the writer fills them with `''`, and `country` with `ZZ`.
+- **The enrichment columns exist from the start.** Until T13 enriches events, the writer fills them with `''`; `country` is the entry's `cc`, which ingest sets to `ZZ` until T13. Until T14 assigns sessions, `session_id` is `0` and `session_start` is the event's own time. `session_id = 0` marks the rows written before T14; the sessions table only sees later inserts.
+- **The writer's columns** are `mieru.writer.enrich.EventRow`, in table order. A test checks them against the table, so a column added here and not there fails CI.
 
 **Sessions** are derived, not written by the application:
 
@@ -207,7 +208,7 @@ FROM (
 
 | Key | Type | Purpose | Lifetime |
 |---|---|---|---|
-| `events` | Stream + one consumer group | Buffer between `ingest` and `writer`. Entry fields: [conventions.md](../conventions.md) section 5 | Entry deleted after acknowledgement. Never trimmed: `XADD` runs without `MAXLEN`, which would delete entries the writer hasn't stored |
+| `events` | Stream + consumer group `writers` | Buffer between `ingest` and `writer`. Entry fields: [conventions.md](../conventions.md) section 5 | Entry deleted after acknowledgement. Never trimmed: `XADD` runs without `MAXLEN`, which would delete entries the writer hasn't stored |
 | `sess:{site_id}:{visitor_id}` | Hash | Session id, start, first-touch attributes | 30 min, reset on each event |
 | `rl:{site_id}:{minute}` | Counter | Per-site rate limit | 2 min |
 | `usage:{org_id}:{yyyymm}` | Counter | *(after MVP)* Events accepted this month | 60 days |

@@ -8,22 +8,13 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from tests.integration.conftest import serve
 
-from mieru.core import clock, redis
+from mieru.core import clock
 from mieru.core.config import Settings
 from mieru.ingest.app import create_app
 from mieru.ingest.refresh import refresh_once
 from mieru.ingest.stream import STREAM
 
 Refresh = Callable[[], Awaitable[None]]
-
-
-@pytest.fixture
-async def redis_db(settings: Settings) -> AsyncIterator[Redis]:
-  """Redis database 15, emptied before the test: the one the app writes to"""
-  client = redis.connect(settings)
-  await client.flushdb()
-  yield client
-  await client.aclose()
 
 
 @pytest.fixture

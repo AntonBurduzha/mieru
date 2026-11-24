@@ -54,5 +54,5 @@ async def test_events_is_split_by_month_and_sorted_by_site_first(ch: AsyncClient
   assert engine == "MergeTree"
   assert partition_key == "toYYYYMM(timestamp)"
   assert sorting_key == "site_id, toDate(timestamp), name, visitor_id, timestamp"
-  # the writer's retried batches are dropped by this window (T14 adds the token)
+  # the window keeps the writer's last 1000 insert tokens, so a retried batch is stored once
   assert "non_replicated_deduplication_window = 1000" in create_query

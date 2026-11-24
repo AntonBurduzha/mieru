@@ -247,7 +247,7 @@ Nothing here depends on Claude Code. The spec is the contract, and the commands 
 
 Every spec has a "Where to debug" table, written before you test. It lists three to five places where the task's behaviour is decided, each with a `file:line`, a trigger that reaches it, and what to look at. Start there.
 
-**In Cursor.** `.vscode/launch.json` holds four configs.
+**In Cursor.** `.vscode/launch.json` holds five configs.
 1. Select the interpreter `apps/backend/.venv/bin/python` once (Command Palette, "Python: Select Interpreter").
 2. Click left of a line number to set a breakpoint.
 3. Start a config from the Run and Debug panel:
@@ -256,11 +256,13 @@ Every spec has a "Where to debug" table, written before you test. It lists three
 |---|---|---|
 | `api` | the api on port 8000 | `curl` or the browser |
 | `ingest` | ingest on port 8001 | `curl` |
+| `writer` | `python -m mieru.writer` | an event sent to ingest, or `stream.append` in a test |
 | `pytest: current file` | the tests in the open file | the tests themselves |
 | `pytest: -k` | the tests matching an expression it asks for | the tests themselves |
 
 Some details of these configs:
 - **No `--reload`.** The app configs run without it, because reload runs the app in a child process and the debugger stays attached to the parent. Restart the config after a change.
+- **One writer at a time.** A second writer reads as the same consumer, `writer-1`, so the two split the entries and your breakpoint may never be hit. Stop a terminal writer first.
 - **One process per port.** Stop any `uvicorn` already running on the same port first.
 - **`envFile` points at a file that doesn't exist.** This stops Cursor from loading `.env` itself. Cursor's parser would keep the inline `# comments` as part of the values, and those environment variables would override the app's own reading of `.env`.
 

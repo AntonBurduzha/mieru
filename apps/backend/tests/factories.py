@@ -1,10 +1,12 @@
 from collections.abc import Sequence
 from itertools import count
+from uuid import uuid4
 
 from clickhouse_connect.driver.asyncclient import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mieru.core import clock
+from mieru.ingest.stream import StreamEntry
 from mieru.models import Organization, Site
 from mieru.repositories.organizations import insert_organization
 from mieru.repositories.sites import insert_site
@@ -87,3 +89,21 @@ async def insert_events(client: AsyncClient, events: Sequence[dict[str, object]]
   """Insert the events into ClickHouse in one block, as the writer will."""
   rows = [[event[column] for column in EVENT_COLUMNS] for event in events]
   await client.insert("events", rows, column_names=EVENT_COLUMNS)
+
+
+def make_entry(site_id: int, **overrides: object) -> StreamEntry:
+  """A stream entry for a page view, now, by a new visitor; overrides replace fields."""
+  fields: dict[str, object] = {
+    "site_id": site_id,
+    "org_id": uuid4(),
+    "ts": int(clock.now().timestamp() * 1000),
+    "n": "pageview",
+    "u": "https://example.com/",
+    "r": "",
+    "ua": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+    "vid": next(_sequence),
+    "pvid": None,
+    "cc": "ZZ",
+    "p": {},
+  }
+  return StreamEntry.model_validate(fields | overrides)
