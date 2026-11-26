@@ -70,6 +70,18 @@
       "python": "${workspaceFolder}/apps/backend/.venv/bin/python",
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      "name": "pytest: e2e",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-m", "e2e"],
+      "cwd": "${workspaceFolder}/apps/backend",
+      "envFile": "${workspaceFolder}/.vscode/no-env-file",
+      "python": "${workspaceFolder}/apps/backend/.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ],
   "inputs": [

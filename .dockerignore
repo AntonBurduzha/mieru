@@ -6,4 +6,8 @@
 !apps/backend/alembic.ini
 !apps/backend/migrations/
 !apps/backend/clickhouse/
+!apps/tracker/package.json
+!apps/tracker/pnpm-lock.yaml
+!apps/tracker/build.mjs
+!apps/tracker/src/
 **/__pycache__

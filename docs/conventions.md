@@ -65,7 +65,7 @@ mieru/
     │   │   ├── repositories/ # SQL only, always scoped by org or site
     │   │   ├── services/     # business rules: sites and salts, then auth
     │   │   ├── api/          # dashboard API: app.py, deps.py, routes/
-    │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, refresh, stream
+    │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, refresh, stream, tracker
     │   │   ├── writer/       # __main__, consumer, batch, enrich, inserter; later useragent, sources, sessions
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
     │   │   ├── worker/       # __main__, rotation (the hourly salt rotation); later more tasks
@@ -74,7 +74,7 @@ mieru/
     │       ├── factories.py  # make_organization, make_site, make_event, make_entry: valid objects with overridable defaults
     │       ├── unit/         # no I/O, milliseconds
     │       ├── integration/  # real Postgres, Redis and ClickHouse from compose
-    │       └── e2e/          # (later) the whole pipeline: payload -> ClickHouse -> stats API
+    │       └── e2e/          # the whole pipeline: payload -> ClickHouse (the stats API from T18)
     ├── web/                  # (later) the React dashboard; design in frontend.md
     │   ├── index.html
     │   ├── vite.config.ts    # React, Tailwind, the router plugin, dev proxy /api -> :8000
@@ -271,7 +271,7 @@ Response shapes, in order: aggregate, timeseries, breakdown, realtime.
 | ClickHouse | migrations `clickhouse/<NNNN>_<slug>.sql`, `0000_schema_migrations.sql` ... `0003_sessions_mv.sql`: one statement per file, always `IF NOT EXISTS`. An applied file never changes: its sha256 is recorded, so add a new file instead. `events` has `non_replicated_deduplication_window = 1000` |
 | Worker | `mieru.worker.rotation`: `rotate_once` runs `rotate_salts` for today in its own transaction and logs `salts_rotated` (`today`, `created`, `deleted`); `rotate_forever` runs it at every full UTC hour, and a failure logs `job_failed` (`task`, `error_type`). `mieru.db.session.SessionFactory` is the session factory that it and ingest's refresh take |
 | Tools | `python -m mieru.tools.create_site --domain <d> [--timezone <tz>] (--org-name <name> \| --org-id <uuid>)` (prints `site_id=<int> organization_id=<uuid> domain=<normalized>`; exit 1 on `conflict`, `not_found` or `validation_failed`, with nothing written); `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate [--dir clickhouse]` (applies the pending `clickhouse/*.sql` in order, `--dir` relative to the working directory; prints `applied <name>` per file, or `up to date (<latest>)`; exit 1 on `migration_failed` (a failed statement, a changed applied file, a bad file name), with stderr naming the file; a recorded version with no file is only a warning) |
-| Tracker | `build.mjs` writes `dist/p.js` and copies it to `apps/backend/src/mieru/ingest/static/p.js` (gitignored), which `ingest` serves |
+| Tracker | `build.mjs` writes `dist/p.js` and copies it to `apps/backend/src/mieru/ingest/static/p.js` (gitignored). The image's `tracker` stage does the same before the package is built. `mieru.ingest.tracker.load_tracker` reads it at startup, and `ingest` serves it gzipped from memory at `/js/p.js` |
 
 ### Later (after the MVP)
 
@@ -308,7 +308,7 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 | Unit | Pure logic: validation, drop rules, visitor id, user-agent mapping, sources, query builder SQL | pytest, hypothesis | `tests/unit/` |
 | Integration | One component with its real store: repositories, auth, the rate limit and stream append, writer to ClickHouse, stats queries, worker jobs | pytest + Compose | `tests/integration/` |
 | Contract | Two sides agree: OpenAPI and the generated TypeScript types; the stream entry written by ingest and read by writer | CI diff check; `tests/unit/contracts/` | CI, `tests/unit/` |
-| Pipeline end to end | Payload -> ingest -> stream -> writer -> ClickHouse -> stats API | pytest marker `e2e` | `tests/e2e/` |
+| Pipeline end to end | Payload -> ingest -> stream -> writer -> ClickHouse; the stats API from T18 | pytest marker `e2e` | `tests/e2e/` |
 | Privacy | No IP or user agent in any store or log | pytest marker `e2e` | `tests/e2e/test_privacy.py` |
 | Tracker | The right request, only when it should be sent; the size budget | Playwright in Chromium, against the built file ([decision 42](architecture/decisions.md)); `build.mjs` exit code | `apps/tracker/test/` |
 | Web | Per [frontend.md](frontend.md) | | `apps/web/` |
@@ -348,7 +348,13 @@ ClickHouse has no cheap rollback, and truncating per test costs tens of millisec
 
 ### 6.5 The two most important tests
 
-**The pipeline test** (`tests/e2e/test_pipeline.py`): create an org and a site, make sure today's salts exist, post a page view and a custom event with props to the real ingest app, run one writer cycle, then check ClickHouse (2 events, 1 session, the right country, browser, source and `props['plan']`), and the stats API (1 visitor, 1 page view, 2 events). It runs on every PR and proves T1-T4.
+**The pipeline test** (`tests/e2e/test_pipeline.py`) runs on every PR and proves the backend half of T1-T4; the tracker's Playwright tests prove the browser half.
+
+- **As built (T11):**
+  - `live_site` (`tests/e2e/conftest.py`) commits an org and a site, so the real ingest app's own startup loads them, along with today's salts. The conftest reuses the integration fixtures with a star import;
+  - the test posts the three bodies the tracker sends, as `text/plain` with a browser user agent and `X-Real-IP`: a page view, an SPA page view with a query string, and a custom event with props;
+  - it runs one writer cycle (`run_once`), then checks ClickHouse: three rows with their paths, `props`, referrer and country `ZZ`, one shared visitor id, and an empty stream.
+- **Still to come:** T13 checks country, browser and source; T14 one session; T18 the stats API (1 visitor, 2 page views, 3 events).
 
 **The privacy test** (section 7.6).
 
@@ -365,8 +371,8 @@ ClickHouse has no cheap rollback, and truncating per test costs tens of millisec
 |---|---|
 | Editor save | ruff format, ruff check |
 | pre-commit | ruff format, ruff check, mypy |
-| Every PR (CI) | backend: ruff, format check, mypy, pytest with real databases. tracker: install from the lockfile, the build with its budget, the Playwright tests. The web job is added with the app |
-| `main` (CI) | everything above, then the image build and push to GHCR |
+| Every PR (CI) | backend: ruff, format check, mypy, pytest with real databases, then `pytest -m e2e`. tracker: install from the lockfile, the build with its budget, the Playwright tests. image: the build, which builds the tracker too, then the smoke tests (the apps import, the script is in the image within budget). The web job is added with the app |
+| `main` (CI) | everything above, then the image push to GHCR and the deploy |
 | On demand *(after MVP)* | k6 load and resilience scenarios against the server |
 
 ### 6.8 Tests written by agents

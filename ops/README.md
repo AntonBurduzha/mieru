@@ -54,8 +54,10 @@ The first time only, the whole stack starts by hand:
 ```bash
 cd /srv/mieru
 docker manifest inspect ghcr.io/antonburduzha/mieru-app:$(git rev-parse HEAD) > /dev/null   # CI has published this commit
-docker compose -f compose.prod.yaml up -d --wait
+docker compose -f compose.prod.yaml up -d --wait postgres redis clickhouse
 docker compose -f compose.prod.yaml run --rm --no-deps api alembic upgrade head   # the Postgres tables
+docker compose -f compose.prod.yaml run --rm --no-deps api python -m mieru.tools.ch_migrate   # the ClickHouse tables
+docker compose -f compose.prod.yaml up -d --wait   # the rest; the worker needs the salts table, the writer the events table
 timeout 120 docker compose -f compose.prod.yaml logs -f caddy | grep -m1 'certificate obtained successfully'   # the first issuance can take a minute
 curl -s https://<domain>/api/v1/version          # the sha from step 5
 ```
@@ -66,7 +68,7 @@ After that, every merge to `main` deploys itself (step 9). To deploy a commit by
 ssh deploy@<ip> /srv/mieru/ops/deploy.sh <full sha on main>
 ```
 
-`deploy.sh` refuses a commit that isn't on `main`, a checkout with local changes, and a second deploy while one runs. It pulls the image, detaches the checkout at the commit, migrates Postgres and then ClickHouse, sets `MIERU_TAG` in `.env`, and restarts `ingest-1`, `ingest-2` and `api` one at a time, each ready before the next. The databases and `caddy` keep running; Caddy only reloads its config. The checkout stays detached at the deployed commit, so `git -C /srv/mieru rev-parse HEAD` names what runs.
+`deploy.sh` refuses a commit that isn't on `main`, a checkout with local changes, and a second deploy while one runs. It pulls the image, detaches the checkout at the commit, migrates Postgres and then ClickHouse, sets `MIERU_TAG` in `.env`, and restarts `writer`, `worker`, `ingest-1`, `ingest-2` and `api` one at a time, each ready before the next. `writer` and `worker` go first, so the stream's reader is new before any new ingest writes to it. They have no port, so they count as ready once their log shows `startup_complete`. The databases and `caddy` keep running; Caddy only reloads its config. The checkout stays detached at the deployed commit, so `git -C /srv/mieru rev-parse HEAD` names what runs.
 
 **Migrations.** `alembic upgrade head` runs in a one-off `api` container of the new image (`run --rm --no-deps`), while the old containers keep serving. A migration waits at most 10 s for a lock (`lock_timeout` in `migrations/env.py`). A failed migration stops the deploy before `.env` changes and before any restart; the log ends with `deploy: Postgres migrations failed; nothing was restarted`. Then `python -m mieru.tools.ch_migrate` runs the same way and applies the pending files in `/app/clickhouse`. Its failure stops the deploy too, with `deploy: ClickHouse migrations failed; nothing was restarted`, and the line above it names the file. That is why every migration must work with the code already running (expand, migrate, contract: [deployment.md](../docs/architecture/deployment.md)). `docker compose -f compose.prod.yaml exec api alembic current` names the Postgres revision the database is at. This lists the ClickHouse files applied:
 
@@ -77,7 +79,7 @@ docker compose -f compose.prod.yaml exec clickhouse sh -c \
 
 ## 7. After a reboot
 
-Docker starts on boot and every service has `restart: unless-stopped`, so the stack comes back by itself. Check it with `docker compose -f compose.prod.yaml ps`: every service is `healthy`.
+Docker starts on boot and every service has `restart: unless-stopped`, so the stack comes back by itself. Check it with `docker compose -f compose.prod.yaml ps`: every service is `healthy`, except `writer` and `worker`, which have no healthcheck and show `Up`. `docker compose -f compose.prod.yaml logs --tail 20 writer worker` shows what they did since their start.
 
 ## 8. The CI deploy key
 
@@ -153,3 +155,26 @@ docker compose -f compose.prod.yaml exec api python -m mieru.tools.create_site \
 - For another site of the same organization, pass `--org-id <uuid>` from the first output instead of `--org-name`.
 - On an error the tool writes nothing and exits 1 with the reason on stderr: `conflict` (the domain is taken), `not_found` (no such organization) or `validation_failed` (an unknown timezone).
 - What exists: `docker compose -f compose.prod.yaml exec postgres psql -U mieru -d mieru -c 'SELECT id, domain, timezone, status FROM sites'`.
+
+**Install the script** on the site: put this in every page's `<head>`, with the domain exactly as `create_site` printed it.
+
+```html
+<script>window.mieru=window.mieru||function(){(mieru.q=mieru.q||[]).push(arguments)}</script>
+<script defer data-domain="<domain>" src="https://in.<mieru domain>/js/p.js"></script>
+```
+
+- The first line is optional. It queues `mieru(...)` calls made before the script loads.
+- A site with a Content-Security-Policy needs `https://in.<mieru domain>` in both `script-src` and `connect-src`.
+- The script sends nothing from an automated browser, a `file:` page, or a browser where `localStorage.mieru_ignore` is `"true"`. To keep your own visits out, run `localStorage.mieru_ignore = 'true'` in the site's console.
+
+**Check that events arrive.** Open a page of the site in a normal browser window. DevTools, Network shows `p.js` and then `POST /api/event` with `202`. Within a few seconds the event is in ClickHouse:
+
+```bash
+docker compose -f compose.prod.yaml exec clickhouse sh -c \
+  'clickhouse-client -u mieru --password "$CLICKHOUSE_PASSWORD" -q "SELECT timestamp, name, hostname, pathname FROM mieru.events WHERE site_id = <site_id> ORDER BY timestamp DESC LIMIT 5"'
+```
+
+If nothing arrives:
+- `curl -sI https://in.<mieru domain>/js/p.js` should show `200`;
+- a `202` with `x-mieru-dropped: unknown_site` means `data-domain` doesn't match a site. A new site reaches ingest's cache within 30 s;
+- `docker compose -f compose.prod.yaml logs --tail 50 writer` shows `batch_inserted` or `batch_failed`.
