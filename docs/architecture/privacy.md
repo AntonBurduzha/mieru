@@ -21,14 +21,16 @@ visitor_id = BLAKE2b( key = salt_of_the_day,
 
 ```mermaid
 flowchart LR
-    A["Day N, 23:00 UTC<br/>worker creates the salt for day N+1"] --> B["00:00 UTC<br/>ingest uses the day N+1 salt"]
+    A["Day N, by 23:00 UTC<br/>the salt for day N+1 exists"] --> B["00:00 UTC<br/>ingest uses the day N+1 salt"]
     B --> C["Day N+1<br/>day N salt is kept only to continue open sessions"]
-    C --> D["Day N+2, 00:00 UTC<br/>day N salt is deleted"]
+    C --> D["Day N+2, 00:00 UTC<br/>the worker deletes the day N salt"]
 ```
 
-Each salt row is stored with the date it belongs to, and `ingest` picks the salt by the UTC date of the server's clock when the event arrives. Creating tomorrow's salt an hour early removes any race at midnight.
+Each salt row is stored with the date it belongs to, and `ingest` picks the salt by the UTC date of the server's clock when the event arrives. Tomorrow's salt exists well before midnight, so there is no race when the day changes.
 
-`ingest` also creates salts itself: at startup and on every 30-second cache refresh, `services.salts.ensure_salts` inserts today's and tomorrow's salt when they're missing, then reads yesterday's, today's and tomorrow's into memory. Events are then counted before the worker exists (T10), and while it is down ([decision 40](decisions.md)). The insert is `INSERT ... ON CONFLICT (day) DO NOTHING` followed by a read, so two replicas that race keep the first salt written and end up with the same one. If today's salt is still missing, the event is dropped as `no_salt`.
+The `worker` (`python -m mieru.worker`) runs `services.salts.rotate_salts` at startup and at every full UTC hour ([decision 43](decisions.md)). Each run creates tomorrow's salt if it's missing and deletes every salt dated before yesterday, so only yesterday's, today's and tomorrow's remain. The run at 00:00 on day N+2 therefore deletes the day N salt, 48 hours after it came into use. A failed run logs `job_failed` and is retried at the next hour, so a Postgres outage at midnight keeps the old salt up to an hour longer. Without Postgres at startup, the worker exits and Docker restarts it.
+
+`ingest` also creates salts itself: at startup and on every 30-second cache refresh, `services.salts.ensure_salts` inserts today's and tomorrow's salt when they're missing, then reads yesterday's, today's and tomorrow's into memory. Events are then counted even while the worker is down ([decision 40](decisions.md)), and the worker's own insert is usually a no-op. The insert is `INSERT ... ON CONFLICT (day) DO NOTHING` followed by a read, so two replicas that race keep the first salt written and end up with the same one. If today's salt is still missing, the event is dropped as `no_salt`.
 
 **Sessions across midnight.** At 00:00 the visitor's id changes. To avoid cutting every open session in two, `ingest` also computes the id under yesterday's salt and sends both, as `vid` and `pvid`. The writer looks for a live session under today's id, then yesterday's. When yesterday's salt is missing (a fresh install), `pvid` is empty.
 

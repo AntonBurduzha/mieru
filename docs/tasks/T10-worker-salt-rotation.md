@@ -2,7 +2,7 @@
 id: T10
 title: Worker and salt rotation
 mode: agent
-status: build
+status: done
 features: []
 depends: [T05]
 branch: t10-worker-salt-rotation
@@ -125,12 +125,33 @@ Nothing beyond the standard checks.
 5. Press Ctrl+C: `shutdown_complete`, and `echo $?` prints `0`. With Postgres stopped (`docker compose stop postgres`), the worker exits 1 with a connection error.
 
 ## Where to debug
-Written before the developer's test, from the code on disk.
+Paths are under `apps/backend/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Which salts go | `src/mieru/services/salts.py:38` (`delete_salts_before(today - ONE_DAY)` in `rotate_salts`), the insert on line 37 | the Cursor config `worker` (its startup run) after step 1 of "Test it yourself"; or `pytest: -k` with `rotate_keeps_yesterday` | `today` is the UTC date. Everything before `today - 1 day` goes, so `deleted` counts every older row, the 2000-01-01 one included. Yesterday, today and later days are never touched. `created` is False when ingest already made tomorrow's |
+| Waiting for the hour | `src/mieru/worker/rotation.py:42` (`sleep_until`, the loop condition), called from `rotate_forever` on line 55 | `pytest: -k` with `full_hour` | `left` starts near 2 s (the clock is moved to 23:59:58). After each wake the wall clock is read again, so an early wake sleeps the rest and never runs on the old day. A `stop` ends the loop at once, and line 57 returns |
+| A failed run | `src/mieru/worker/rotation.py:60` (the `except` in `rotate_forever`) | `pytest: -k` with `failed_run` | `exc` is `ConnectionRefusedError`; only its type is logged. The loop goes back to line 55 and waits for the next hour, not a retry at once |
+| One run and its commit | `src/mieru/worker/rotation.py:26` (`rotate_once`: the timeout, the session and the commit on line 28) | `worker`, or `pytest: -k` with `deletes_an_old_salt` | `today` is read once, before the session opens. Without the commit, another session would still see the old salt. A query that hangs raises `TimeoutError` after 10 s |
+| Start and stop | `src/mieru/worker/__main__.py:28` (the startup `rotate_once`, outside any `try`); the signal handlers on line 21 | `worker`, then Ctrl+C; or `pytest: -k` with `no_postgres` | With Postgres down, line 28 raises, the engine is disposed and the process exits 1 before `startup_complete`. A signal only sets `stop`, so a run in progress still commits |
 
 ## Notes
 - The worker runs every hour, not once at 23:00 (the developer's choice, at the spec). A 23:00-only job would delete the salt for day N at 23:00 on day N+2, keeping it up to 71 hours instead of 48. Each run is two small statements.
 - A failed hourly run is retried at the next hour, so a Postgres outage at midnight keeps the old salt up to one hour longer.
-- `next_hour` is computed from `clock.now()` after every run, never as the last target plus one hour. If the monotonic sleep wakes a few milliseconds early, the run sees the old day, and the loop just runs again at the hour.
+- `next_hour` is computed from `clock.now()` after every run, never as the last target plus one hour. asyncio sleeps on the monotonic clock, which can wake a little before the wall clock reaches the hour. So `sleep_until` checks `clock.now()` after each sleep and sleeps whatever is left, and a run never sees the old day. Criterion 4 counts exactly one run, so it depends on this.
+- Build progress: the `test-writer` wrote the tests (all failing on the missing code), then the code was implemented and the standard checks passed (229 tests). Once `mieru.worker` existed, ruff reordered the imports in the two new `test_rotation.py` files; nothing else in the tests changed.
+- `SessionFactory` moved to `mieru.db.session`, so the worker doesn't import from `mieru.ingest`. Both statements in `repositories.salts` use `RETURNING`, because `AsyncSession.execute` is typed as returning `Result`, which has no `rowcount`.
 - The ingest app still creates today's and tomorrow's salts on every refresh (decision 40). So the worker's insert is usually a no-op, and the deletes are the part only the worker does.
 
 ## Review
+**Reviewer, 2026-11-26:** 0 must-fix, 1 should-fix, 4 nits.
+1. [should-fix, fixed] `docs/conventions.md` 6.3: it still said every salt test uses `date(2031, 3, 10)`. Rotation tests must use a day before every real salt, and the worker's subprocess test deletes committed past salts in `mieru_test`. The paragraph now says both.
+2. [nit, left] `apps/backend/src/mieru/worker/rotation.py:44`: a wall-clock jump forward during the wait (an NTP step, a suspended VM) delays the run by up to the time left in that wait. `timeout=min(left, 60.0)` would re-read the clock every minute.
+3. [nit, left] `apps/backend/tests/unit/worker/test_rotation.py`: no deterministic test proves the wall-clock recheck in `sleep_until`. One would freeze the clock just before the hour, check the wait isn't over, then `move_to` the hour.
+4. [nit, left] `docs/architecture/privacy.md:24`: the first diagram node says "by 23:00". Ingest and the hourly worker create tomorrow's salt from the start of the day.
+5. [nit, left] `apps/backend/src/mieru/worker/__main__.py:28` (design): a startup run that crosses a full hour makes `rotate_forever` skip that hour. That can keep the old salt one more hour, the same bound as a failed run.
+
+**Verifier, 2026-11-26: NEED_HUMAN.** 1-7 pass (exit 0) · 8 human: waiting for the developer · ruff, the format check, mypy and `pytest` (229 passed) exit 0 · Scope clean · Test integrity clean (only the imports of the two new `test_rotation.py` files were reordered by ruff).
+Re-run for the finish, after the debug map and Review were written: DONE. 1-7 pass (exit 0) · 8 human: confirmed in run 2 · `pytest` (229 passed), ruff and mypy exit 0 · Scope and test integrity clean · every "Where to debug" line checked (one fixed: the `return` is on line 57).
+
+**Done, 2026-11-26:** the developer ran "Test it yourself" and confirmed it with `/task T10`. Final verdict DONE.

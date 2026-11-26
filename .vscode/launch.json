@@ -37,6 +37,17 @@
       "justMyCode": true
     },
     {
+      "name": "worker",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "mieru.worker",
+      "cwd": "${workspaceFolder}/apps/backend",
+      "envFile": "${workspaceFolder}/.vscode/no-env-file",
+      "python": "${workspaceFolder}/apps/backend/.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "pytest: current file",
       "type": "debugpy",
       "request": "launch",

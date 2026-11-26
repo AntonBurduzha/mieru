@@ -255,7 +255,7 @@ Nothing here depends on Claude Code. The spec is the contract, and the commands 
 
 Every spec has a "Where to debug" table, written before you test. It lists three to five places where the task's behaviour is decided, each with a `file:line`, a trigger that reaches it, and what to look at. Start there.
 
-**In Cursor.** `.vscode/launch.json` holds five configs.
+**In Cursor.** `.vscode/launch.json` holds six configs.
 1. Select the interpreter `apps/backend/.venv/bin/python` once (Command Palette, "Python: Select Interpreter").
 2. Click left of a line number to set a breakpoint.
 3. Start a config from the Run and Debug panel:
@@ -265,6 +265,7 @@ Every spec has a "Where to debug" table, written before you test. It lists three
 | `api` | the api on port 8000 | `curl` or the browser |
 | `ingest` | ingest on port 8001 | `curl` |
 | `writer` | `python -m mieru.writer` | an event sent to ingest, or `stream.append` in a test |
+| `worker` | `python -m mieru.worker` | its run at startup; restart the config to run it again, or wait for the full hour |
 | `pytest: current file` | the tests in the open file | the tests themselves |
 | `pytest: -k` | the tests matching an expression it asks for | the tests themselves |
 
