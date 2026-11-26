@@ -64,6 +64,34 @@ jobs:
       - name: Wait for ClickHouse
         run: curl -fsS --retry 30 --retry-delay 1 --retry-all-errors http://localhost:8123/ping
       - run: uv run pytest --cov=mieru --cov-report=term-missing
+
+  # The tracking script: the 1 KB budget, then every behaviour in real Chromium
+  tracker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/tracker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # no job needs git credentials after checkout
+      # The pnpm version comes from packageManager in package.json
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: apps/tracker/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/tracker/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Build (fails over 1,024 bytes gzipped)
+        run: pnpm build
+      # Headless shell only: no test runs headed in CI
+      - run: pnpm exec playwright install --with-deps --only-shell chromium
+      - run: pnpm test
+
   # Every PR builds the image and imports both apps from it, so a broken image fails review
   image:
     needs: backend

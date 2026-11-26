@@ -11,9 +11,11 @@ __pycache__/
 .pytest_cache/
 .coverage
 
-# web
+# web and tracker
 node_modules/
 dist/
+test-results/
+playwright-report/
 
 # downloaded data
 apps/backend/data/*.mmdb

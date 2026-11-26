@@ -91,10 +91,12 @@ mieru/
     │   │   ├── lib/          # format.ts, cn.ts
     │   │   └── test/         # setup, MSW handlers, render helpers
     │   └── e2e/              # Playwright journeys
-    └── tracker/              # (later) the tracking script
+    └── tracker/              # the tracking script, plain JavaScript
+        ├── package.json      # pnpm; scripts build, test, dev; devDependencies terser and Playwright
         ├── src/p.js
         ├── build.mjs         # minify -> dist/p.js, print the gzipped size, fail over budget
-        └── test/
+        ├── playwright.config.js
+        └── test/             # *.spec.js, helpers.js, server.mjs (fixture pages, POST /api/event), fixtures/
 ```
 
 **One backend package, four entrypoints.** `ingest`, `api`, `writer` and `worker` share models, config and helpers. One package and one image means one set of dependencies and one build. Each container starts a different module (section 3).
@@ -142,6 +144,7 @@ flowchart LR
 | `writer` | `uv run python -m mieru.writer` | none | yes |
 | `worker` | `uv run python -m mieru.worker` (an asyncio scheduler loop; no task queue in the MVP) | none | later |
 | `web` | `pnpm --dir apps/web dev` (Vite; proxies `/api` to port 8000) | 3000 | later |
+| tracker pages | `pnpm --dir apps/tracker dev` (the fixture pages with the unminified script; prints each event). Its tests use their own server on 5180 | 5179 | yes |
 | Postgres, Redis, ClickHouse | `docker compose up -d` from the repo root | 5432, 6379, 8123 | yes |
 
 **URLs**
@@ -210,7 +213,7 @@ Task ids (`T01`) and feature ids (`T1`, tracking) are different things: a task b
 - Memoize (`useMemo`, `useCallback`, `memo`) only when the profiler shows a need.
 - Commands: `pnpm --dir apps/web dev`, `build`, `typecheck`, `lint`, `test`, `test:e2e`, `size`, `api:types`.
 
-**Tracker:** plain JavaScript, no dependencies. The budget is 1,024 bytes gzipped, and the build fails above it.
+**Tracker:** plain JavaScript, no dependencies. The budget is 1,024 bytes gzipped, and the build fails above it. Commands: `pnpm --dir apps/tracker build`, `test` (builds, then Playwright; extra arguments go to Playwright, for example `test test/spa.spec.js`), `dev`.
 
 ---
 
@@ -307,7 +310,7 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 | Contract | Two sides agree: OpenAPI and the generated TypeScript types; the stream entry written by ingest and read by writer | CI diff check; `tests/unit/contracts/` | CI, `tests/unit/` |
 | Pipeline end to end | Payload -> ingest -> stream -> writer -> ClickHouse -> stats API | pytest marker `e2e` | `tests/e2e/` |
 | Privacy | No IP or user agent in any store or log | pytest marker `e2e` | `tests/e2e/test_privacy.py` |
-| Tracker | The right request, only when it should be sent; the size budget | Vitest, Playwright, `build.mjs` exit code | `apps/tracker/test/` |
+| Tracker | The right request, only when it should be sent; the size budget | Playwright in Chromium, against the built file ([decision 42](architecture/decisions.md)); `build.mjs` exit code | `apps/tracker/test/` |
 | Web | Per [frontend.md](frontend.md) | | `apps/web/` |
 | Load and resilience *(after MVP)* | Throughput, latency, no loss under failure | k6 | `ops/k6/` |
 
@@ -362,7 +365,7 @@ ClickHouse has no cheap rollback, and truncating per test costs tens of millisec
 |---|---|
 | Editor save | ruff format, ruff check |
 | pre-commit | ruff format, ruff check, mypy |
-| Every PR (CI) | backend: ruff, format check, mypy, pytest with real databases. Web and tracker jobs are added with those apps |
+| Every PR (CI) | backend: ruff, format check, mypy, pytest with real databases. tracker: install from the lockfile, the build with its budget, the Playwright tests. The web job is added with the app |
 | `main` (CI) | everything above, then the image build and push to GHCR |
 | On demand *(after MVP)* | k6 load and resilience scenarios against the server |
 

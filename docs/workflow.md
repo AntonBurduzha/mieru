@@ -15,7 +15,7 @@
 | [uv](https://docs.astral.sh/uv/) | Python 3.13 and every backend dependency | `uv --version` |
 | pre-commit (`uv tool install pre-commit`) | Format, lint and types before each commit | `pre-commit --version` |
 | jq | Used by the Claude Code hooks | `jq --version` |
-| Node 24 and pnpm | The web app and the tracker, once they exist | `node --version`, `pnpm --version` |
+| Node 24 and pnpm | The tracker now, the web app later | `node --version`, `pnpm --version` |
 | Claude Code | Optional, but the `/task` workflow runs in it | `claude --version` |
 
 **Get it running**
@@ -36,6 +36,14 @@ uv run pytest                        # unit and integration tests; creates and m
 ```
 
 After a pull that adds a migration, run `uv run alembic upgrade head` or `uv run python -m mieru.tools.ch_migrate` again. `uv run alembic current` names the Postgres revision your database is at, and a second `ch_migrate` run prints `up to date (<latest file>)`. To get a site to work with until there are accounts: `uv run python -m mieru.tools.create_site --org-name Me --domain example.com --timezone Europe/Kyiv`.
+
+For the tracker, from the repo root:
+
+```bash
+pnpm --dir apps/tracker install                           # terser and Playwright, from the lockfile
+pnpm --dir apps/tracker exec playwright install chromium  # once: the browser the tests run in
+pnpm --dir apps/tracker test                              # builds dist/p.js and prints its gzipped size, then the browser tests
+```
 
 Then start the two apps, one per terminal, from `apps/backend`:
 
@@ -270,6 +278,8 @@ Some details of these configs:
 - **`breakpoint()`** on a line stops there and opens [pdb](https://docs.python.org/3/library/pdb.html#debugger-commands): `p <expr>` prints a value, `n` runs the next line, `s` steps into a call, `c` continues, `q` quits. Remove it before committing. See [`breakpoint()`](https://docs.python.org/3/library/functions.html#breakpoint).
 - **`uv run pytest <path> -k <name> --pdb`** opens pdb where a test fails, with its variables in scope. See [`--pdb`](https://docs.pytest.org/en/stable/how-to/failures.html#using-python-library-pdb-with-pytest).
 - **`-s`** shows `print` output, and **`--lf`** reruns only the tests that failed last time.
+
+**The tracker.** `pnpm --dir apps/tracker dev` serves the fixture pages at `http://127.0.0.1:5179/page.html` with the unminified `src/p.js`, and prints each event it receives. Set breakpoints in Chrome's DevTools (Sources, `js/p.js`); a reload picks up an edit. To step through one test, `pnpm --dir apps/tracker test -g "<test name>" --debug` opens the Playwright Inspector, and `--ui` instead of `--debug` shows every step with its network requests.
 
 **Logs.** Every response carries an `X-Request-Id` header (`curl -i` shows it), and every log line of that request carries the same `request_id`. Search the app's terminal for it. Locally the logs are readable lines; in the other environments they are JSON.
 

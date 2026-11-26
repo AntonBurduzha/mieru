@@ -2,7 +2,7 @@
 id: T09
 title: Tracker
 mode: agent
-status: build
+status: done
 features: [T1, T2, T3, T4]
 depends: []
 branch: t09-tracking-script
@@ -82,16 +82,37 @@ Every command runs from the repo root.
 1. Once: `pnpm --dir apps/tracker install && pnpm --dir apps/tracker exec playwright install chromium`.
 2. `pnpm --dir apps/tracker build` prints the size line, well under 1024 B gzipped.
 3. `pnpm --dir apps/tracker test`: every test passed.
-4. `pnpm --dir apps/tracker dev`, then open `http://localhost:5179/page.html` in your Chrome: the terminal prints `event {"n":"pageview",...}`. "Pricing" prints one more page view, "?tab=2" prints nothing, "Sign up" prints `"p":{"plan":"pro"}`, and Back prints a page view. DevTools, Network: `POST /api/event` with `text/plain`.
+4. `pnpm --dir apps/tracker dev`, then open `http://127.0.0.1:5179/page.html` in your Chrome: the terminal prints `event {"n":"pageview",...}`. "Pricing" prints one more page view, "?tab=2" prints nothing, and "Sign up" prints `"p":{"plan":"pro"}`. Back prints nothing (only the query changed), and Back again prints the page view for `/page.html`. DevTools, Network: `POST /api/event` with `text/plain`.
 5. In the DevTools console, `localStorage.mieru_ignore = 'true'` and reload: nothing is printed. Then `localStorage.removeItem('mieru_ignore')`.
 
 ## Where to debug
-Written once, just before the developer's test.
+`pnpm --dir apps/tracker dev` serves the unminified `src/p.js`, so a DevTools breakpoint (Sources, `js/p.js`) sits on the same line as in the file. For a test: `pnpm --dir apps/tracker test -g "<test name>" --debug`.
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Whether this browser is tracked at all | `apps/tracker/src/p.js:12` (`refused`) | the dev page; set `localStorage.mieru_ignore = 'true'` and reload, or `-g "webdriver" --debug` | `location.protocol`, `navigator.webdriver`, `ignored()`. Wrongly `true`: real visitors send nothing, an empty dashboard. Wrongly `false`: bots are counted |
+| Whether a navigation is a page view | `apps/tracker/src/p.js:48` (`pageview`) | the dev page: "Pricing", "?tab=2", Back | `location.pathname` against `lastPath`. A bug shows as SPA page views missing, or counted twice |
+| What is sent, and where | `apps/tracker/src/p.js:30` (`send`) | any page view, or "Sign up" | `endpoint.href` is the script's host, and the body has five keys with string props. A bug shows as `400 invalid_event` from ingest, or events sent to the site's own host |
+| Calls made before the script loaded | `apps/tracker/src/p.js:63` | `http://127.0.0.1:5179/queue.html` | `queue`, captured at line 11 before line 53 replaces `window.mieru`. A bug shows as queued events lost, or sent before the page view |
+| The size budget | `apps/tracker/build.mjs:37` | `node apps/tracker/build.mjs --budget 100` in Cursor's JavaScript Debug Terminal | `gzipped` and `budget`. A bug lets CI pass an oversized script, or writes files on a failed build |
 
 ## Notes
+- Build: `package.json`, the lockfile and `playwright.config.js` were written before the test-writer ran, which may write only `test/**`. The red run is `playwright test` without a build: with no `dist/p.js` the server answers 404, so the tests fail on their assertions.
 - T1-T4 stay `passes: false` until T11: their check also runs the pipeline test.
 - After the merge, add `tracker` to the required checks of the `main` ruleset (today only `backend`).
 - CI is seen only after the push, so criterion 7's human half is confirmed on the PR before it is marked ready.
 - The diff is about 500 lines plus the lockfile, over the 300 lines for agent PRs; most of it is tests.
 
 ## Review
+**Reviewer, 2026-11-25:** 0 must-fix, 1 should-fix, 3 nits. The suite passed 390 of 390 runs with `--repeat-each=15`, and failed for each of 17 deliberate breaks of `p.js`.
+
+1. [should-fix, fixed] `docs/tasks/T09-tracking-script.md:85`: the first Back after "?tab=2" lands on the same path, so it prints nothing; step 4 now says to press Back twice.
+2. [nit, left] `apps/tracker/test/refuse.spec.js:30`: "nothing sent" is checked through the `fetch` wrapper only; a `sendBeacon` or image request would slip past. Also recording `page.on("request")` hits on `/api/event` would close it.
+3. [nit, left] `apps/tracker/src/p.js:6`: with no `document.currentScript` (loaded as `type="module"`, or inlined), the script throws at load. Plausible does the same; bailing out costs about 15 bytes.
+4. [nit, left] `apps/tracker/test/build.spec.js:55`: the "any working directory" test runs over the budget, so it proves only the source path, not the output paths. The code is right (`build.mjs:12-17`).
+
+**Verifier, 2026-11-25: NEED_HUMAN.** 1-6 pass (exit 0; 26 passed; `dist/p.js: 786 B, 500 B gzipped`) · 7 auto: actionlint exit 0, human: the PR's `tracker` check, after the push · Proof of done pass · `features.json` unchanged (T1-T4 wait for T11's pipeline test) · Scope clean · Test integrity clean.
+
+**Verifier, 2026-11-26: NEED_HUMAN.** Re-run after the developer removed the header comments from four test files and shortened one comment in `build.mjs`: 1-6 pass (26 passed; `dist/p.js: 786 B, 500 B gzipped`) · 7 auto: actionlint exit 0, human: the PR's `tracker` check, after the push · Proof of done pass · `features.json` unchanged · Scope clean · Test integrity clean (comments only; no test or assertion changed).
+
+**Done, 2026-11-26:** the developer ran "Test it yourself" and confirmed it with `/task T09`. Last verdict NEED_HUMAN, only for criterion 7's CI half: the `tracker` check is confirmed on the draft PR before it is marked ready, as Notes planned.
