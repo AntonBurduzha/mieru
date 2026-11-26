@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1
 
+# The tracking script, which ingest serves at /js/p.js
+FROM node:24-slim AS tracker
+RUN npm install --global pnpm@12.11.2
+WORKDIR /repo/apps/tracker
+COPY apps/tracker/package.json apps/tracker/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/pnpm-store \
+    pnpm install --frozen-lockfile --store-dir /pnpm-store
+COPY apps/tracker/build.mjs ./
+COPY apps/tracker/src ./src
+RUN node build.mjs
+
 FROM python:3.13-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
@@ -14,6 +25,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # project itself
 COPY apps/backend/pyproject.toml apps/backend/uv.lock apps/backend/README.md ./
 COPY apps/backend/src ./src
+# Into the package before it's built: the wheel takes every file under src/mieru
+COPY --from=tracker /repo/apps/tracker/dist/p.js ./src/mieru/ingest/static/p.js
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 

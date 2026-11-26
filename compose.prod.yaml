@@ -1,7 +1,7 @@
 name: mieru-prod
 
-# Shared by ingest-1, ingest-2 and api. Every setting is listed here on purpose:
-# no env_file, so nothing on the server can override the image's GIT_SHA.
+# Shared by ingest-1, ingest-2, api, writer and worker. Every setting is listed here on
+# purpose: no env_file, so nothing on the server can override the image's GIT_SHA.
 x-app: &app
   image: ghcr.io/antonburduzha/mieru-app:${MIERU_TAG:?set MIERU_TAG to an image tag}
   environment:
@@ -77,6 +77,30 @@ services:
       redis: { condition: service_healthy }
       clickhouse: { condition: service_healthy }
     mem_limit: 384m
+
+  # No port, so no healthcheck: deploy.sh waits for startup_complete in the log instead
+  writer:
+    <<: *app
+    command: ["python", "-m", "mieru.writer"]
+    # Nothing outside reaches it, and it reaches nothing outside
+    networks: [internal]
+    depends_on:
+      redis: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+    # Longer than one insert (send_receive_timeout is 30 s), so SIGTERM lets it finish
+    # and acknowledge its batch. A SIGKILL loses nothing either: the batch stays pending
+    stop_grace_period: 45s
+    mem_limit: 256m
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "mieru.worker"]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    # One rotation has a 10 s timeout; a SIGKILL mid-run only rolls it back
+    stop_grace_period: 15s
+    mem_limit: 192m
 
   postgres:
     image: postgres:17

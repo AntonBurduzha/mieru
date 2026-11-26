@@ -3,14 +3,17 @@ from fastapi import APIRouter, Request, Response
 from redis.exceptions import RedisError
 
 from mieru.core import clock, health, redis
+from mieru.core.errors import NotFound
 from mieru.ingest import stream
 from mieru.ingest.pipeline import MAX_BODY_BYTES, Dropped, DropReason, parse_event, process
+from mieru.ingest.tracker import CACHE_CONTROL, Tracker, accepts_gzip
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
 DROPPED_HEADER = "X-Mieru-Dropped"
+SCRIPT_TYPE = "text/javascript; charset=utf-8"
 
 
 @router.get("/health")
@@ -57,6 +60,21 @@ async def event(request: Request) -> Response:
     log.warning("event_dropped", reason="redis_unavailable", error_type=type(exc).__name__)
     return dropped("redis_unavailable")
   return Response(status_code=202)
+
+
+@router.api_route("/js/p.js", methods=["GET", "HEAD"])
+async def script(request: Request) -> Response:
+  """The tracking script, gzipped when the client takes it; cached for a day."""
+  tracker: Tracker | None = request.app.state.tracker
+  if tracker is None:
+    raise NotFound("The tracking script is not built")
+  # Vary, because a shared cache must not hand the gzipped copy to a client without gzip
+  headers = {"Cache-Control": CACHE_CONTROL, "Vary": "Accept-Encoding"}
+  body = tracker.body
+  if accepts_gzip(request.headers.get("accept-encoding", "")):
+    body = tracker.gzipped
+    headers["Content-Encoding"] = "gzip"
+  return Response(body, media_type=SCRIPT_TYPE, headers=headers)
 
 
 async def read_body(request: Request, limit: int) -> bytes:

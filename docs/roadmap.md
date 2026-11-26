@@ -10,7 +10,7 @@
 
 | | |
 |---|---|
-| **Next** | T11 (agent) |
+| **Next** | T12 (human) |
 | **Open questions** | IPv6: T03 publishes no AAAA record, so every visitor connects over IPv4; IPv6 on `edge` waits for T26. Rollback across a migration: `alembic upgrade head` on a commit older than the database fails; decide before T16 adds the second migration |
 | **Updated** | 2026-11-26 |
 
@@ -54,7 +54,7 @@
 | T08 | **Writer core.** Consumer group, batches by size or time, insert into ClickHouse with a dedup token, acknowledge only after the insert, clean shutdown on SIGTERM | human | | T06, T07 | done |
 | T09 | **Tracker.** Page view on load, SPA navigation, custom events with the queue, refusing `file:` pages and automated browsers, the 1 KB budget in CI, a Playwright page test | agent | T1-T4 (with T11) | | done |
 | T10 | **Worker and salt rotation.** `python -m mieru.worker`: an asyncio loop that, at startup and every full UTC hour, creates tomorrow's salt if it's missing and deletes salts older than 48 hours | agent | | T05 | done |
-| T11 | **Pipeline test and first real traffic.** `tests/e2e/test_pipeline.py` in CI, the seed tool, writer and worker in the production stack, ingest serving `/js/p.js` (the tracker built in the image, compressed), the script installed on your own sites | agent | T1-T4 | T04, T08, T09, T10 | todo |
+| T11 | **Pipeline test and first real traffic.** `tests/e2e/test_pipeline.py` in CI, writer and worker in the production stack, ingest serving `/js/p.js` (the tracker built in the image, compressed), the script installed on your own sites | agent | T1-T4 | T04, T08, T09, T10 | done |
 
 ## M2: Complete the write path
 
@@ -75,7 +75,7 @@
 |---|---|---|---|---|---|
 | T16 | **Auth.** Users, memberships, server-side sessions, argon2, email verification with the dev outbox, the login limiter, the Origin check, and the tenant-isolation test | human | A1 (with T20) | T05 | todo |
 | T17 | **Sites API.** Create, list, update and delete sites; domain rules; the snippet; the "is it installed?" endpoint | agent | A2 (with T23) | T16 | todo |
-| T18 | **Stats query builder.** Aggregate and timeseries queries, periods in the site's timezone, filters, parameters and whitelists, the read-only ClickHouse user, query limits and `stats_unavailable` | human | D1, D2 (with T21) | T14 | todo |
+| T18 | **Stats query builder.** Aggregate and timeseries queries, periods in the site's timezone, filters, parameters and whitelists, the read-only ClickHouse user, query limits and `stats_unavailable`, the seed tool (`mieru.tools.seed`, fake traffic with known answers for the stats tests) | human | D1, D2 (with T21) | T14 | todo |
 | T19 | **Breakdowns and realtime.** Breakdown by every MVP property with paging, current visitors, the stats cache | agent | D3, D4 (with T22) | T18 | todo |
 | T20 | **Web foundation.** The Vite app per [frontend.md](frontend.md): router, typed client, query setup, app shell, theme, auth pages, sites list, the web CI job and size budgets | agent | A1 | T16, T17 | todo |
 | T21 | **Dashboard.** Date range, stat cards, the chart, filters in the URL | human | D1, D2, D6 | T19, T20 | todo |

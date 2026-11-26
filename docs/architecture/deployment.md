@@ -31,7 +31,7 @@ Everything runs as one Docker Compose project on a single Linux server in the EU
 
 | Request | Goes to |
 |---|---|
-| `in.mieru.example/*` | `ingest-1` and `ingest-2`, round robin. A replica that fails its health check leaves the rotation, and a request that can't connect is retried on the other |
+| `in.mieru.example/*` | `ingest-1` and `ingest-2`, round robin. A replica that fails its health check leaves the rotation, and a request that can't connect is retried on the other. That includes `/js/p.js`, the tracking script, which ingest serves from memory ([decision 44](decisions.md)) |
 | `mieru.example/api/*` | `api` |
 | `mieru.example/*` | the web app's static files; unknown paths get `index.html` |
 | any other host name | the connection is closed |
@@ -73,8 +73,9 @@ flowchart LR
 - **Who triggers it.** CI's `deploy` job runs after `publish` on every push to `main`. It calls `.github/workflows/deploy.yml`, which can also be run by hand with any commit on `main` ([decision 35](decisions.md)). CI on `main` runs one at a time, so deploys happen in merge order.
 - **What the CI key can do.** It connects as `deploy`, and its line in `authorized_keys` forces `ops/deploy.sh` with `restrict`. The client's text is only the commit sha, and the script refuses anything but a full sha on `main` ([decision 34](decisions.md)).
 - **`ops/deploy.sh`.** Stage 1 takes a lock, checks the commit, pulls its image and detaches the checkout at it; a failure there changes nothing. Then it `exec`s the target commit's own copy for stage 2, so a commit that changes the deploy steps is deployed by those steps. Stage 2 runs the migrations, sets `MIERU_TAG` in `.env`, restarts the app containers one at a time, and reloads Caddy's config.
+- **Restart order:** `writer`, `worker`, `ingest-1`, `ingest-2`, `api`. The stream's reader is new before any new ingest writes to it ([decision 46](decisions.md)). `writer` and `worker` have no port and no healthcheck, so the script counts one as ready when its new container has logged `startup_complete`, within 30 seconds.
 - **No lost events during a deploy.** The script restarts `ingest-1`, waits until its `/health/ready` answers, waits 10 more seconds (longer than Caddy's `fail_duration` plus one health check interval, so Caddy routes to it again), then restarts `ingest-2`. While one replica is down, Caddy's health checks take it out of the rotation and any request that fails to connect is retried on the other. `api` has one replica, so the dashboard is unavailable for a few seconds while it restarts.
-- **Clean shutdown.** On SIGTERM `ingest` finishes in-flight requests and `writer` finishes and acknowledges its current batch.
+- **Clean shutdown.** On SIGTERM `ingest` finishes in-flight requests and `writer` finishes and acknowledges its current batch. The writer's `stop_grace_period` is 45 seconds, longer than one insert can take (the ClickHouse client's 30-second timeout). The worker's is 15 seconds, longer than one rotation's 10-second timeout. A SIGKILL after that loses nothing: the writer's batch stays pending and is stored once on the next start, and a rotation cut short only rolls back.
 - **Failed migration** stops the deploy before any container restarts. Schema changes follow expand, migrate, contract so old and new code can overlap.
 - **A failed deploy stops** where it failed and doesn't roll back by itself: the services it hadn't reached keep the old version ([decision 36](decisions.md)).
 - **Rollback** is a deploy of an earlier commit on `main`, with the same script: the checkout, the config and the image (tagged with the commit) go back together.
@@ -97,4 +98,11 @@ R2's free tier covers 10 GB. Before launch, one restore drill: new server, boots
 
 **What this gives up compared with a platform like Railway:** a preview environment per pull request, managed TLS and deploys, and any protection against the server itself failing.
 
-**MVP stack:** Caddy (which also serves the web app's files and renews its own certificates), two ingest replicas, api, writer, worker, Postgres, Redis and ClickHouse. That is 9 containers on 8 GB. Before adding a container, set a memory limit for each one and measure it.
+**MVP stack:** Caddy (which also serves the web app's files and renews its own certificates), two ingest replicas, api, writer, worker, Postgres, Redis and ClickHouse. That is 9 containers on 8 GB. Before adding a container, set a memory limit for each one and measure it. Since T11 all of them run in `compose.prod.yaml`. The writer's limit is 256 MB and the worker's 192 MB: estimates, until T25 measures them.
+
+**The image.** One `mieru-app` image runs every app container. Its Dockerfile has three stages ([decision 45](decisions.md)):
+- `tracker` (Node 24): installs the tracker's locked dev dependencies and runs `build.mjs`, so a script over the 1 KB budget fails the image build;
+- `build`: installs the Python dependencies, then the `mieru` package with the built `p.js` inside it;
+- the runtime stage: copies the virtualenv and the migration files, and runs as a non-root user. Node never reaches it.
+
+CI's smoke steps check that the image imports the apps and holds the script within budget.

@@ -9,15 +9,18 @@
 # Stage 1 checks the commit, pulls its image and moves the checkout. A failure there
 # changes nothing. Then the target commit's own copy of this script runs stage 2, so a
 # commit that changes the deploy steps is deployed by those steps.
-# Stage 2 migrates, sets MIERU_TAG and restarts ingest-1, ingest-2 and api, each one
-# ready before the next. A failure stops the deploy; the services not reached yet keep
-# the old version. To roll back, deploy the previous commit (ops/README.md).
+# Stage 2 migrates, sets MIERU_TAG and restarts writer, worker, ingest-1, ingest-2 and
+# api, each one ready before the next. A failure stops the deploy; the services not
+# reached yet keep the old version. To roll back, deploy the previous commit (ops/README.md).
 # Everything is inside main(), called on the last line, so bash has read the whole
 # script before anything runs, even when the checkout replaces this file.
 set -euo pipefail
 
 readonly APP_DIR=/srv/mieru
-# Restarted in this order. Each entry is <service>:<port of its /health/ready>
+# Restarted first, in this order: the stream's reader is new before any new ingest
+# writes to it (decision 46). No port, so ready means startup_complete in the log
+readonly BACKGROUND_SERVICES=(writer worker)
+# Restarted next, in this order. Each entry is <service>:<port of its /health/ready>
 readonly APP_SERVICES=(ingest-1:8001 ingest-2:8001 api:8000)
 # The pause after ingest-1 before ingest-2 stops. It must be longer than Caddy's
 # fail_duration (5 s) plus one health_interval (2 s), so Caddy has ingest-1 back in
@@ -127,6 +130,28 @@ wait_ready() {
   done
 }
 
+wait_started() {
+  local svc=$1
+  local deadline=$((SECONDS + READY_SECONDS))
+  # The log of the new container only: --force-recreate removed the old one. Read into
+  # a string, because grep -q in a pipe can end it early, which pipefail counts as failure
+  until [[ $(compose logs --no-log-prefix "$svc" 2>/dev/null) == *startup_complete* ]]; do
+    ((SECONDS < deadline)) || die "$svc did not log startup_complete after ${READY_SECONDS}s; see: docker compose -f compose.prod.yaml logs $svc"
+    sleep 1
+  done
+}
+
+restart_background() {
+  local svc=$1 image
+  log "Restarting $svc"
+  # No healthcheck, so --wait returns once the container runs, or fails if it exits
+  compose up -d --no-deps --force-recreate --wait --wait-timeout 60 "$svc" \
+    || die "$svc did not start"
+  image=$(compose ps --format '{{.Image}}' "$svc")
+  [[ $image == *":$SHA" ]] || die "$svc runs $image, not the tag $SHA"
+  wait_started "$svc"
+}
+
 restart() {
   local svc=$1 port=$2 image
   log "Restarting $svc"
@@ -146,6 +171,9 @@ apply() {
   set_tag
 
   local entry svc
+  for svc in "${BACKGROUND_SERVICES[@]}"; do
+    restart_background "$svc"
+  done
   for entry in "${APP_SERVICES[@]}"; do
     svc=${entry%%:*}
     restart "$svc" "${entry##*:}"

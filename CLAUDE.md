@@ -36,6 +36,7 @@ A task runs through `/task` in two runs. Run 1 writes the spec in `docs/tasks/T<
 From `apps/backend`:
 - `uv run pytest -m "not integration and not e2e"`: unit tests, no services needed
 - `uv run pytest`: unit and integration tests; needs `docker compose up -d`
+- `uv run pytest -m e2e`: the pipeline test, from the tracker's posts through ingest and the writer to ClickHouse; needs `docker compose up -d`
 - `uv run ruff check --fix . && uv run ruff format . && uv run mypy src tests`
 - `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000`
 - `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001`

@@ -255,7 +255,7 @@ Nothing here depends on Claude Code. The spec is the contract, and the commands 
 
 Every spec has a "Where to debug" table, written before you test. It lists three to five places where the task's behaviour is decided, each with a `file:line`, a trigger that reaches it, and what to look at. Start there.
 
-**In Cursor.** `.vscode/launch.json` holds six configs.
+**In Cursor.** `.vscode/launch.json` holds seven configs.
 1. Select the interpreter `apps/backend/.venv/bin/python` once (Command Palette, "Python: Select Interpreter").
 2. Click left of a line number to set a breakpoint.
 3. Start a config from the Run and Debug panel:
@@ -268,6 +268,7 @@ Every spec has a "Where to debug" table, written before you test. It lists three
 | `worker` | `python -m mieru.worker` | its run at startup; restart the config to run it again, or wait for the full hour |
 | `pytest: current file` | the tests in the open file | the tests themselves |
 | `pytest: -k` | the tests matching an expression it asks for | the tests themselves |
+| `pytest: e2e` | the pipeline test (`-m e2e`), which the other two configs skip, because `addopts` deselects the `e2e` marker | a breakpoint in ingest's route, the writer's `run_once` or the test itself: all three run in the test's own process |
 
 Some details of these configs:
 - **No `--reload`.** The app configs run without it, because reload runs the app in a child process and the debugger stays attached to the parent. Restart the config after a change.

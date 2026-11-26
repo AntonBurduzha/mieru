@@ -7,7 +7,7 @@
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/api/event` | Body below, with any content type (the tracker sends `text/plain`, which needs no CORS preflight). `202` with an empty body when well formed, kept or dropped; a dropped event carries `X-Mieru-Dropped: <reason>`. `400 invalid_event` when not, with the fixed message `Malformed event` and no echo of the input. `Access-Control-Allow-Origin: *`, set by Caddy. Never sets a cookie |
-| GET | `/js/p.js` | The tracking script, cached for a day |
+| GET, HEAD | `/js/p.js` | The tracking script, from memory. `Content-Type: text/javascript; charset=utf-8`, `Cache-Control: public, max-age=86400`, `Vary: Accept-Encoding`, gzipped when `Accept-Encoding` takes gzip ([tracker.md](tracker.md), "Serving it"). `404 not_found` when no script was built. Never sets a cookie |
 | GET | `/health` | Liveness: answers while the process runs |
 | GET | `/health/ready` | Readiness: checks Redis. Postgres isn't checked, because ingest doesn't start without it ([write-path.md](write-path.md), "The caches") |
 | GET | `/version` | The git commit the image was built from |

@@ -20,7 +20,12 @@ Left out of the base script to keep the size: outbound links, file downloads, sc
 
 ## As built (T09)
 
-The source is `apps/tracker/src/p.js`; `node build.mjs` minifies it with terser into `dist/p.js`, about 790 bytes, 500 gzipped. Over 1,024 bytes gzipped the build exits 1 and writes nothing, and CI's `tracker` job runs it on every PR. Ingest serves the file from T11.
+The source is `apps/tracker/src/p.js`; `node build.mjs` minifies it with terser into `dist/p.js`, about 790 bytes, 500 gzipped. Over 1,024 bytes gzipped the build exits 1 and writes nothing, and CI's `tracker` job runs it on every PR.
+
+**Serving it (T11).**
+- The image's `tracker` stage runs the same build, so an oversized script fails the image too ([decision 45](decisions.md)).
+- Ingest reads the file once at startup (`mieru.ingest.tracker`) and keeps it and a gzipped copy in memory ([decision 44](decisions.md)). It serves `GET` and `HEAD /js/p.js` with `Cache-Control: public, max-age=86400` and `Vary: Accept-Encoding`, gzipped when the request's `Accept-Encoding` allows it.
+- Without a built file, ingest logs `tracker_missing`, answers `404` on `/js/p.js`, and still collects events.
 
 **The snippet**, with the optional stub that queues calls made before the script loads:
 
