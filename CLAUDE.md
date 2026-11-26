@@ -1,7 +1,7 @@
 # Mieru: context for Claude Code
 
 Privacy-first web analytics (Plausible-like): a 1 KB tracking script, no cookies, one dashboard page.
-Monorepo: `apps/backend` (Python 3.13, uv, FastAPI, package `mieru` under `src/`), `apps/web` (React, not started), `apps/tracker` (plain JS, not started).
+Monorepo: `apps/backend` (Python 3.13, uv, FastAPI, package `mieru` under `src/`), `apps/web` (React, not started), `apps/tracker` (plain JS, pnpm, Playwright tests).
 
 ## Docs: read the one the work needs
 - `docs/product.md`: what Mieru does and for whom; stories with acceptance criteria; MVP scope.
@@ -43,6 +43,8 @@ From `apps/backend`:
 
 From the repo root:
 - `docker compose up -d`: Postgres, Redis, ClickHouse
+- `pnpm --dir apps/tracker test`: builds the tracker within its 1 KB budget, then the Playwright tests (once: `pnpm --dir apps/tracker install && pnpm --dir apps/tracker exec playwright install chromium`)
+- `pnpm --dir apps/tracker dev`: the tracker's fixture pages on port 5179, printing each event
 
 ## When compacting
 Keep: the task id and its status, the files changed, failing tests, open questions.

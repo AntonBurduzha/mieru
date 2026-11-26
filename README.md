@@ -50,7 +50,7 @@ docker compose -f compose.prod.yaml --env-file ops/rehearsal.env down
 |---|---|
 | `apps/backend` | Python 3.13 package `mieru` (FastAPI): ingest, api, writer and worker |
 | `apps/web` | The React dashboard (not started) |
-| `apps/tracker` | The tracking script (not started) |
+| `apps/tracker` | The tracking script: plain JavaScript, at most 1 KB gzipped, tested in Chromium with Playwright |
 | `ops/` | Server configuration and scripts |
 | `docs/` | Product, architecture, conventions, roadmap and task specs |
 
