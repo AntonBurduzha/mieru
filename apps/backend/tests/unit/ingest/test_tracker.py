@@ -8,6 +8,7 @@ import pytest
 import time_machine
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
 from mieru.ingest.tracker import accepts_gzip, load_tracker
 
 # Not the real tracker: any script will do, and a repeated one compresses well
