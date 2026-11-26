@@ -1,12 +1,11 @@
 import asyncio
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from datetime import date
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from mieru.core import clock
+from mieru.db.session import SessionFactory
 from mieru.ingest.salts import SaltCache
 from mieru.ingest.site_cache import CachedSite, SiteCache
 from mieru.repositories.sites import list_all_sites
@@ -17,8 +16,6 @@ log = structlog.get_logger(__name__)
 REFRESH_INTERVAL_S = 30.0
 # A query that hangs gives up long before the next refresh is due
 REFRESH_TIMEOUT_S = 10.0
-
-SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 async def refresh_once(

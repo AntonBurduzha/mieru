@@ -68,7 +68,7 @@ mieru/
     │   │   ├── ingest/       # app, routes, pipeline, bots, visitor, geo, salts, site_cache, refresh, stream
     │   │   ├── writer/       # __main__, consumer, batch, enrich, inserter; later useragent, sources, sessions
     │   │   ├── stats/        # (later) query_builder, metrics, filters, cache
-    │   │   ├── worker/       # (later) __main__ with the scheduler loop, tasks
+    │   │   ├── worker/       # __main__, rotation (the hourly salt rotation); later more tasks
     │   │   └── tools/        # command-line tools: create_site.py, ch_migrate.py, later seed.py
     │   └── tests/
     │       ├── factories.py  # make_organization, make_site, make_event, make_entry: valid objects with overridable defaults
@@ -142,7 +142,7 @@ flowchart LR
 | `api` | `uv run uvicorn --factory mieru.api.app:create_app --reload --port 8000` | 8000 | yes |
 | `ingest` | `uv run uvicorn --factory mieru.ingest.app:create_app --reload --port 8001` | 8001 | yes |
 | `writer` | `uv run python -m mieru.writer` | none | yes |
-| `worker` | `uv run python -m mieru.worker` (an asyncio scheduler loop; no task queue in the MVP) | none | later |
+| `worker` | `uv run python -m mieru.worker` (an asyncio loop that rotates the salts at startup and every full UTC hour; no task queue in the MVP) | none | yes |
 | `web` | `pnpm --dir apps/web dev` (Vite; proxies `/api` to port 8000) | 3000 | later |
 | tracker pages | `pnpm --dir apps/tracker dev` (the fixture pages with the unminified script; prints each event). Its tests use their own server on 5180 | 5179 | yes |
 | Postgres, Redis, ClickHouse | `docker compose up -d` from the repo root | 5432, 6379, 8123 | yes |
@@ -265,11 +265,11 @@ Response shapes, in order: aggregate, timeseries, breakdown, realtime.
 | Area | Names |
 |---|---|
 | Core | `mieru.core.security`: `new_token`, `hash_token`, `hash_password`, `verify_password` |
-| Services | `services/sites.py` (`normalize_domain`, `create_site`), `services/salts.py` (`ensure_salts`) |
+| Services | `services/sites.py` (`normalize_domain`, `create_site`), `services/salts.py` (`ensure_salts`, `rotate_salts`) |
 | Repositories | `get_site_for_user(session, user_id, site_id)`, `get_site_by_domain(session, domain)` |
 | Postgres | `email_tokens(id, user_id, token_hash unique, purpose, expires_at, used_at)` for email links. Constraint names: `pk_<table>`, `fk_<table>_<column>_<referred table>`, `uq_<table>_<column>`, `ck_<table>_<name>`, `ix_<table>_<column>`. Migrations: `migrations/versions/<NNNN>_<slug>.py` with revision id `<NNNN>`, made by `alembic revision --autogenerate --rev-id <NNNN> -m "<what>"` and read before committing |
 | ClickHouse | migrations `clickhouse/<NNNN>_<slug>.sql`, `0000_schema_migrations.sql` ... `0003_sessions_mv.sql`: one statement per file, always `IF NOT EXISTS`. An applied file never changes: its sha256 is recorded, so add a new file instead. `events` has `non_replicated_deduplication_window = 1000` |
-| Worker | `rotate_salts` |
+| Worker | `mieru.worker.rotation`: `rotate_once` runs `rotate_salts` for today in its own transaction and logs `salts_rotated` (`today`, `created`, `deleted`); `rotate_forever` runs it at every full UTC hour, and a failure logs `job_failed` (`task`, `error_type`). `mieru.db.session.SessionFactory` is the session factory that it and ingest's refresh take |
 | Tools | `python -m mieru.tools.create_site --domain <d> [--timezone <tz>] (--org-name <name> \| --org-id <uuid>)` (prints `site_id=<int> organization_id=<uuid> domain=<normalized>`; exit 1 on `conflict`, `not_found` or `validation_failed`, with nothing written); `python -m mieru.tools.seed --site-id 1 --events 1000000 --days 90` (fake traffic into ClickHouse); `python -m mieru.tools.ch_migrate [--dir clickhouse]` (applies the pending `clickhouse/*.sql` in order, `--dir` relative to the working directory; prints `applied <name>` per file, or `up to date (<latest>)`; exit 1 on `migration_failed` (a failed statement, a changed applied file, a bad file name), with stderr naming the file; a recorded version with no file is only a warning) |
 | Tracker | `build.mjs` writes `dist/p.js` and copies it to `apps/backend/src/mieru/ingest/static/p.js` (gitignored), which `ingest` serves |
 
@@ -328,7 +328,7 @@ Names reserved so later work fits. Don't build them in MVP tasks.
 
 **Postgres fixtures** (`tests/integration/conftest.py`). `test_database` runs once per run, before the first integration test, without being asked for (`autouse=True`): it creates `mieru_test` if it's missing and runs `alembic upgrade head` on it. A test that asks for `db_session` gets a session on a connection whose outer transaction is rolled back when the test ends. The session joins that transaction with `join_transaction_mode="create_savepoint"`, so a `commit()` or `rollback()` in the code under test acts on a SAVEPOINT, and the test can check what a commit leaves behind. The limit: code that opens its own connection (an app's own engine) can't see the test's rows, so an API test must hand its route the test's session. The migration test works on a scratch database of its own, `mieru_test_migrations`, so going down and up never touches `mieru_test`.
 
-**Ingest fixtures** (`tests/integration/ingest/conftest.py`). The ingest app loads its caches through its own engine, so it can't see a site the test added in `db_session`. A test that adds one calls `refresh()`, which runs `refresh_once` with the test's session on the app's own caches. The app's startup commits today's and tomorrow's salts to `mieru_test` through its own engine, and those rows outlive the run, so salt tests use a day far from today (`date(2031, 3, 10)`).
+**Ingest fixtures** (`tests/integration/ingest/conftest.py`). The ingest app loads its caches through its own engine, so it can't see a site the test added in `db_session`. A test that adds one calls `refresh()`, which runs `refresh_once` with the test's session on the app's own caches. The app's startup commits today's and tomorrow's salts to `mieru_test` through its own engine, and those rows outlive the run, so salt tests use a day far from today (`date(2031, 3, 10)`). Rotation tests are the exception: a rotation deletes every salt before yesterday, so on a later day its `deleted` count would include those committed rows. They use a day earlier than every real salt (`date(2001, 3, 10)`). The worker's subprocess test (`tests/integration/worker/test_main.py`) runs a real rotation on `mieru_test`, which deletes every committed salt dated before yesterday.
 
 **Redis fixtures** (`tests/integration/conftest.py`). `redis_db` empties Redis database 15 before the test and hands over a client for it: the database the ingest app and the writer under test use. `make_entry(site_id, **overrides)` in `tests/factories.py` builds a valid stream entry, for the writer's tests.
 

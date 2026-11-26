@@ -1,3 +1,6 @@
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
   AsyncEngine,
@@ -7,6 +10,10 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from mieru.core.config import Settings
+
+# Anything that opens a session with `async with sessions() as session`: an
+# async_sessionmaker in the apps, a function that hands over the test's session in tests
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 def make_engine(settings: Settings) -> AsyncEngine:
