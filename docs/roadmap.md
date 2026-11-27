@@ -62,7 +62,7 @@
 
 | ID | Task | Mode | Features | Depends | Status |
 |---|---|---|---|---|---|
-| T12 | **Ingest defences.** Bot user agents, spam referrers, the per-site rate limit (pipelined `INCR` + `EXPIRE`, then `XADD`), backpressure above the stream's high-water mark, the in-memory fallback queue when Redis is down, drop counters | human | I2 | T11 | todo |
+| T12 | **Ingest defences.** Bot user agents, spam referrers, the per-site rate limit (pipelined `INCR` + `EXPIRE`, then `XADD`), backpressure above the stream's high-water mark, the in-memory fallback queue when Redis is down, drop counters | human | I2 | T11 | build |
 | T13 | **Enrichment.** Country from the DB-IP file (in ingest), device, browser and OS from the user agent, source and UTM tags from the referrer and URL (in the writer) | agent | I3 | T11 | todo |
 | T14 | **Sessions.** Session state in Redis, the midnight hand-over (yesterday's visitor id), the `sessions` table and materialized view, and the writer crash test | human | I4 | T13 | todo |
 | T15 | **No lost events.** A drill script that sends traffic during a deploy and compares sent and stored counts; run it on the server | agent | OPS1 | T12, T14 | todo |
