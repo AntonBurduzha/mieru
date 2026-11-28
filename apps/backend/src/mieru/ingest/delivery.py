@@ -55,6 +55,9 @@ class Delivery:
     self.queue = FallbackQueue(fallback_size)
     self.stream_length = 0  # as of the last check_stream
     self._full_logged = False
+    # One drain at a time, so flush at shutdown waits for the one run has started
+    self._drain_lock = asyncio.Lock()
+    self._drain_task: asyncio.Task[int] | None = None  # kept, as the loop holds tasks weakly
 
   async def send(self, accepted: Accepted, *, now: datetime) -> DropReason | None:
     """Write one event to the stream, or hold it; None means kept, or the reason it was dropped."""
@@ -90,27 +93,31 @@ class Delivery:
 
   async def drain(self) -> int:
     """Write held entries to the stream, oldest first, until the queue is empty or Redis fails."""
-    written = 0
-    while self.queue:
-      batch = self.queue.oldest(DRAIN_BATCH)
-      try:
-        await stream.append_many(self.redis, batch)
-      except RedisError:
-        return written  # still down; the next run tries again
-      # Removed only now, so a failed batch is still held
-      self.queue.remove_oldest(len(batch))
-      written += len(batch)
-    if written:
-      self._full_logged = False
-      log.info("fallback_drained", events=written)
-    return written
+    async with self._drain_lock:
+      written = 0
+      while self.queue:
+        batch = self.queue.oldest(DRAIN_BATCH)
+        try:
+          await stream.append_many(self.redis, batch)
+        except RedisError:
+          return written  # still down; the next run tries again
+        # Removed only now, so a failed batch is still held
+        self.queue.remove_oldest(len(batch))
+        written += len(batch)
+      if written:
+        self._full_logged = False
+        log.info("fallback_drained", events=written)
+      return written
 
   async def run(self, *, interval_s: float = RUN_INTERVAL_S) -> None:
     """Measure the stream and drain the queue every interval_s, until cancelled."""
     while True:
       try:
         await self.check_stream()
-        await self.drain()
+        # A cancel after EXEC would leave a batch in Redis and in the queue, and flush would
+        # write it again. Shielded, the drain runs to the end, and flush waits for it
+        self._drain_task = asyncio.create_task(self.drain())
+        await asyncio.shield(self._drain_task)
       except Exception as exc:
         # A stopped loop would freeze stream_length and strand the queue until a restart
         log.warning("delivery_failed", error_type=type(exc).__name__)
@@ -122,6 +129,11 @@ class Delivery:
     with suppress(TimeoutError):
       async with asyncio.timeout(timeout_s):
         written = await self.drain()
+    # Out of time: stop the drain run started too, so nothing writes once Redis closes
+    if self._drain_task is not None and not self._drain_task.done():
+      self._drain_task.cancel()
+      with suppress(asyncio.CancelledError):
+        await self._drain_task
     if self.queue:
       log.warning("fallback_lost", events=len(self.queue))
     return written
