@@ -6,13 +6,11 @@
 
 ## Now
 
-<!-- /task edits these fields in place when Next or an open question changes. What's in progress is the Status column below. -->
-
 | | |
 |---|---|
-| **Next** | T12 (human) |
+| **Next** | T13 (agent) |
 | **Open questions** | IPv6: T03 publishes no AAAA record, so every visitor connects over IPv4; IPv6 on `edge` waits for T26. Rollback across a migration: `alembic upgrade head` on a commit older than the database fails; decide before T16 adds the second migration |
-| **Updated** | 2026-11-26 |
+| **Updated** | 2026-11-28 |
 
 ---
 
@@ -24,7 +22,6 @@
 
   `/task <id> --human` or `--agent` overrides the mode before the build starts.
 - **Status** goes `todo`, `spec`, `build`, `test` (agent mode only), `done`. What each status means and what you do at it: [workflow.md](workflow.md) section 3.
-
 - **Features** are the ids in [features.json](features.json) that the task makes pass. A task's spec may make a feature's check more precise, never weaker.
 - **Depends** lists the tasks that must be `done` first.
 - **The order** builds the thinnest working loop first: one real page view from a real site into ClickHouse, in production. Each part is made complete after that loop works.
@@ -60,12 +57,12 @@
 
 **Done when:** I2, I3, I4 and OPS1 pass. Drops are counted by reason, events carry country, device and source, sessions survive midnight, and a deploy under traffic loses nothing.
 
-| ID | Task | Mode | Features | Depends | Status |
-|---|---|---|---|---|---|
-| T12 | **Ingest defences.** Bot user agents, spam referrers, the per-site rate limit (pipelined `INCR` + `EXPIRE`, then `XADD`), backpressure above the stream's high-water mark, the in-memory fallback queue when Redis is down, drop counters | human | I2 | T11 | todo |
-| T13 | **Enrichment.** Country from the DB-IP file (in ingest), device, browser and OS from the user agent, source and UTM tags from the referrer and URL (in the writer) | agent | I3 | T11 | todo |
-| T14 | **Sessions.** Session state in Redis, the midnight hand-over (yesterday's visitor id), the `sessions` table and materialized view, and the writer crash test | human | I4 | T13 | todo |
-| T15 | **No lost events.** A drill script that sends traffic during a deploy and compares sent and stored counts; run it on the server | agent | OPS1 | T12, T14 | todo |
+| ID  | Task                                                                                                                                                                                                                                      | Mode  | Features | Depends  | Status |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------- | -------- | ------ |
+| T12 | **Ingest defences.** Bot user agents, spam referrers, the per-site rate limit (pipelined `INCR` + `EXPIRE`, then `XADD`), backpressure above the stream's high-water mark, the in-memory fallback queue when Redis is down, drop counters | agent | I2       | T11      | done   |
+| T13 | **Enrichment.** Country from the DB-IP file (in ingest), device, browser and OS from the user agent, source and UTM tags from the referrer and URL (in the writer)                                                                        | agent | I3       | T11      | todo   |
+| T14 | **Sessions.** Session state in Redis, the midnight hand-over (yesterday's visitor id), the `sessions` table and materialized view, and the writer crash test                                                                              | agent | I4       | T13      | todo   |
+| T15 | **No lost events.** A drill script that sends traffic during a deploy and compares sent and stored counts; run it on the server                                                                                                           | agent | OPS1     | T12, T14 | todo   |
 
 ## M3: Accounts and the dashboard
 
@@ -94,9 +91,10 @@
 | T27 | **Launch.** Mieru on your own sites and 3-5 friendly outside sites, a demo account with seeded data, status and numbers in the README | human | | T24, T25, T26 | todo |
 
 **Why these are human tasks:**
+
 - T02 and T03: the infrastructure you'll operate yourself.
 - T05 and T06: the data layer.
-- T07, T08, T12 and T14: the pipeline core.
+- T07, T08 and T14: the pipeline core.
 - T16: auth.
 - T18: the query builder.
 - T27: the launch itself.

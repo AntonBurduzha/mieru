@@ -178,3 +178,27 @@ If nothing arrives:
 - `curl -sI https://in.<mieru domain>/js/p.js` should show `200`;
 - a `202` with `x-mieru-dropped: unknown_site` means `data-domain` doesn't match a site. A new site reaches ingest's cache within 30 s;
 - `docker compose -f compose.prod.yaml logs --tail 50 writer` shows `batch_inserted` or `batch_failed`.
+- a `202` with `x-mieru-dropped: bot` or `spam_referrer` means ingest filtered it: a test with `curl` needs a browser's `-A`, and a referrer on the spam list never counts.
+
+**What ingest turned away.** Each ingest container logs a line a minute while traffic comes in:
+
+```bash
+docker compose -f compose.prod.yaml logs --since 10m ingest-1 ingest-2 | grep -E 'events_counted|redis_unavailable|fallback_'
+```
+
+`events_counted` gives `accepted` and the drops by reason, per container, so add the two up. `redis_unavailable`, `fallback_full`, `fallback_drained` and `fallback_lost` trace a Redis outage ([observability.md](../docs/architecture/observability.md)).
+
+## 13. Refresh the referrer spam list
+
+`apps/backend/src/mieru/ingest/referrer_spam.txt` is Matomo's public-domain [`spammers.txt`](https://github.com/matomo-org/referrer-spam-list), pinned at the commit its first line names. Refresh it in a normal change, a few times a year, from the repo root:
+
+```bash
+SHA=$(gh api repos/matomo-org/referrer-spam-list/commits/master --jq .sha)
+{ echo "# matomo-org/referrer-spam-list spammers.txt at $SHA (public domain)"
+  curl -fsSL "https://raw.githubusercontent.com/matomo-org/referrer-spam-list/$SHA/spammers.txt"
+} > apps/backend/src/mieru/ingest/referrer_spam.txt
+uv run --directory apps/backend pytest tests/unit/ingest/test_bots.py
+```
+
+The deploy ships it with the image, and each ingest reads it once at startup: `startup_complete` logs `spam_domains`.
+

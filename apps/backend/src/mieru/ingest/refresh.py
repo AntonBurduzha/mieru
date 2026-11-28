@@ -26,7 +26,13 @@ async def refresh_once(
   rows = await list_all_sites(session)
   await session.commit()
   sites.replace(
-    CachedSite(id=row.id, org_id=row.organization_id, domain=row.domain, status=row.status)
+    CachedSite(
+      id=row.id,
+      org_id=row.organization_id,
+      domain=row.domain,
+      status=row.status,
+      rate_limit_per_min=row.rate_limit_per_min,
+    )
     for row in rows
   )
   salts.replace(day_salts)

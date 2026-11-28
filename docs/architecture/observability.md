@@ -10,6 +10,18 @@ Mieru is itself a monitoring product, so its own pipeline has to be visible.
 - An external uptime check on both domains.
 - A disk alert at 70%.
 
+**Ingest's log lines (T12).** Until OpenTelemetry, the drops are visible only in the logs. None of these lines holds an IP, a user agent or a referrer.
+
+| Event | Fields | When |
+|---|---|---|
+| `events_counted` | `accepted`, `dropped` (reason to count, non-zero only) | Every 60 s and at shutdown, unless nothing came in. Held events count as accepted |
+| `redis_unavailable` | `error_type` | The first event of an outage whose Redis call failed. It went into the fallback queue |
+| `fallback_full` | `size` | Once per outage, when the queue is full and events start being dropped as `redis_unavailable` |
+| `fallback_drained` | `events` | The queue is empty again, and that many held events are in the stream |
+| `fallback_lost` | `events` | At shutdown, the held events the last drain couldn't write in 5 s |
+| `delivery_failed` | `error_type` | The once-a-second stream check and drain failed on something other than a Redis error. The loop goes on |
+| `startup_complete` | `sites`, `spam_domains` | The caches, the spam list and the script are loaded |
+
 **After MVP:** each service sends metrics, traces and logs over OpenTelemetry to a Grafana Alloy container. Alloy forwards them, together with container logs and host metrics, to Grafana Cloud's free tier. The table below is the target for that stage. The stream age row is already covered in the MVP by the health endpoint.
 
 **The numbers that say whether the pipeline is healthy**

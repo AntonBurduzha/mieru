@@ -1,5 +1,6 @@
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Self
 from uuid import UUID
 
@@ -9,6 +10,8 @@ from redis.typing import EncodableT, FieldT
 
 STREAM = "events"
 FORMAT_VERSION = 1
+# A rate-limit counter outlives its minute by one more, then Redis deletes it
+RATE_KEY_TTL_S = 120
 
 
 class StreamEntry(BaseModel):
@@ -53,9 +56,42 @@ class StreamEntry(BaseModel):
     )
 
 
+def _xadd_fields(entry: StreamEntry) -> dict[FieldT, EncodableT]:
+  # xadd is typed for a dict of its own key and value types, so copy into one
+  return {key: value for key, value in entry.to_fields().items()}
+
+
 async def append(redis: Redis, entry: StreamEntry) -> str:
   """Add the entry to the end of the stream and return its id."""
   # No MAXLEN: trimming would delete entries the writer hasn't stored yet
-  # xadd is typed for a dict of its own key and value types, so copy into one
-  fields: dict[FieldT, EncodableT] = {key: value for key, value in entry.to_fields().items()}
-  return str(await redis.xadd(STREAM, fields))
+  return str(await redis.xadd(STREAM, _xadd_fields(entry)))
+
+
+async def append_many(redis: Redis, entries: Sequence[StreamEntry]) -> None:
+  """Add the entries in order, in one MULTI: Redis stores all of them or none."""
+  async with redis.pipeline(transaction=True) as pipe:
+    for entry in entries:
+      pipe.xadd(STREAM, _xadd_fields(entry))
+    await pipe.execute()
+
+
+def rate_key(site_id: int, now: datetime) -> str:
+  """The site's rate-limit counter for the UTC minute that holds now."""
+  return f"rl:{site_id}:{int(now.timestamp()) // 60}"
+
+
+async def count_event(redis: Redis, site_id: int, now: datetime) -> int:
+  """Count one event against the site's minute, and return the count so far."""
+  key = rate_key(site_id, now)
+  # One round trip and no MULTI: the two needn't be atomic (decision 23).
+  # NX sets the expiry only on the first INCR, so the window never slides
+  async with redis.pipeline(transaction=False) as pipe:
+    pipe.incr(key)
+    pipe.expire(key, RATE_KEY_TTL_S, nx=True)
+    count, _ = await pipe.execute()
+  return int(count)
+
+
+async def length(redis: Redis) -> int:
+  """The number of entries in the stream."""
+  return int(await redis.xlen(STREAM))

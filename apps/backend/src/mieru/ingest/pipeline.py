@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, Field, StringConstraints, ValidationError
 
 from mieru.core.errors import InvalidEvent
+from mieru.ingest.bots import is_bot, is_spam_referrer, spam_domains
 from mieru.ingest.salts import SaltCache
 from mieru.ingest.site_cache import SiteCache
 from mieru.ingest.stream import StreamEntry
@@ -62,9 +63,10 @@ def parse_event(body: bytes) -> IngestEvent:
 
 @dataclass(frozen=True, slots=True)
 class Accepted:
-  """The event was kept. It will be written to Redis."""
+  """The event was kept. It will be written to Redis, within the site's limit."""
 
   entry: StreamEntry
+  rate_limit_per_min: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +91,11 @@ def process(
     return Dropped("blocked")
   if site.status == "over_quota":
     return Dropped("over_quota")
+  # In memory, before any Redis call: a bot flood costs no I/O
+  if is_bot(user_agent):
+    return Dropped("bot")
+  if is_spam_referrer(event.r, spam_domains()):
+    return Dropped("spam_referrer")
 
   today = now.date()
   today_salt = salts.get(today)
@@ -111,4 +118,4 @@ def process(
     cc=UNKNOWN_COUNTRY,
     p=event.p,
   )
-  return Accepted(entry)
+  return Accepted(entry, rate_limit_per_min=site.rate_limit_per_min)

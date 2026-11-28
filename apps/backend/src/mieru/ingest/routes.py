@@ -1,14 +1,11 @@
-import structlog
 from fastapi import APIRouter, Request, Response
-from redis.exceptions import RedisError
 
 from mieru.core import clock, health, redis
 from mieru.core.errors import NotFound
-from mieru.ingest import stream
+from mieru.ingest.counters import Counters
+from mieru.ingest.delivery import Delivery
 from mieru.ingest.pipeline import MAX_BODY_BYTES, Dropped, DropReason, parse_event, process
 from mieru.ingest.tracker import CACHE_CONTROL, Tracker, accepts_gzip
-
-log = structlog.get_logger(__name__)
 
 router = APIRouter()
 
@@ -43,22 +40,25 @@ async def event(request: Request) -> Response:
   """Take one event from the tracker: 202 whether it was kept or dropped."""
   body = await read_body(request, MAX_BODY_BYTES)
   state = request.app.state
+  delivery: Delivery = state.delivery
+  counters: Counters = state.counters
+  now = clock.now()
   result = process(
     parse_event(body),
     sites=state.sites,
     salts=state.salts,
     ip=client_ip(request),
     user_agent=request.headers.get("user-agent", ""),
-    now=clock.now(),
+    now=now,
   )
   if isinstance(result, Dropped):
-    return dropped(result.reason)
-  try:
-    await stream.append(state.redis, result.entry)
-  except RedisError as exc:
-    # The only trace of the outage until T12 adds drop counters
-    log.warning("event_dropped", reason="redis_unavailable", error_type=type(exc).__name__)
-    return dropped("redis_unavailable")
+    reason: DropReason | None = result.reason
+  else:
+    reason = await delivery.send(result, now=now)
+  if reason is not None:
+    counters.dropped[reason] += 1
+    return dropped(reason)
+  counters.accepted += 1
   return Response(status_code=202)
 
 

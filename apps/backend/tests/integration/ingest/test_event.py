@@ -136,21 +136,29 @@ async def test_redis_unavailable_still_answers_202(
   client: httpx.AsyncClient,
   ingest_app: FastAPI,
   settings: Settings,
+  redis_db: Redis,
   db_session: AsyncSession,
   refresh: Refresh,
 ) -> None:
   await make_site(db_session, domain="redis-down.example")
   await refresh()
+  delivery = ingest_app.state.delivery
   # Port 1 has nothing listening: the connection is refused at once
   down = settings.model_copy(update={"redis_url": Secret(RedisDsn("redis://127.0.0.1:1/0"))})
-  working, ingest_app.state.redis = ingest_app.state.redis, redis.connect(down)
+  working, delivery.redis = delivery.redis, redis.connect(down)
   try:
     with capture_logs() as logs:
       response = await post(client, event("redis-down.example"))
+    # Checked before Redis comes back, so the background drain can't have run yet
+    held = list(delivery.queue.oldest(10))
+    stored = await stream_fields(redis_db)
   finally:
-    await ingest_app.state.redis.aclose()
-    ingest_app.state.redis = working
+    dead, delivery.redis = delivery.redis, working
+    await dead.aclose()
+  # Held, not dropped: the answer is the same as for a kept event
   assert response.status_code == 202
-  assert response.headers["x-mieru-dropped"] == "redis_unavailable"
-  [drop] = [log for log in logs if log["event"] == "event_dropped"]
-  assert (drop["reason"], drop["error_type"]) == ("redis_unavailable", "ConnectionError")
+  assert "x-mieru-dropped" not in response.headers
+  assert [entry.u for entry in held] == ["https://redis-down.example/"]
+  assert stored == []
+  [outage] = [log for log in logs if log["event"] == "redis_unavailable"]
+  assert outage["error_type"] == "ConnectionError"

@@ -11,6 +11,9 @@ from mieru.core.config import Settings, get_settings
 from mieru.core.errors import register_exception_handlers
 from mieru.core.logging import RequestContextMiddleware, configure_logging
 from mieru.db.session import make_engine, make_sessionmaker
+from mieru.ingest.bots import spam_domains
+from mieru.ingest.counters import Counters, report, report_forever
+from mieru.ingest.delivery import Delivery
 from mieru.ingest.refresh import REFRESH_TIMEOUT_S, refresh_forever, refresh_once
 from mieru.ingest.routes import router
 from mieru.ingest.salts import SaltCache
@@ -48,12 +51,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     task = asyncio.create_task(refresh_forever(sessions, app.state.sites, app.state.salts))
     stack.push_async_callback(stop, task)
 
+    app.state.delivery = Delivery(
+      app.state.redis,
+      high_water=settings.stream_high_water,
+      fallback_size=settings.ingest_fallback_queue,
+    )
+    app.state.counters = Counters()
+    # The stack runs its callbacks in reverse. On the way out the two tasks stop first,
+    # then the held events are written, then the last counts are logged, and Redis closes last
+    stack.callback(report, app.state.counters)
+    stack.push_async_callback(app.state.delivery.flush)
+    stack.push_async_callback(stop, asyncio.create_task(app.state.delivery.run()))
+    stack.push_async_callback(stop, asyncio.create_task(report_forever(app.state.counters)))
+
+    spam = await asyncio.to_thread(spam_domains)
     app.state.tracker = await asyncio.to_thread(load_tracker, app.state.tracker_path)
     if app.state.tracker is None:
       # Events never need the script: a missing build costs /js/p.js, not collection
       log.warning("tracker_missing", path=str(app.state.tracker_path))
     log.info(
-      "startup_complete", env=settings.env, version=settings.git_sha, sites=len(app.state.sites)
+      "startup_complete",
+      env=settings.env,
+      version=settings.git_sha,
+      sites=len(app.state.sites),
+      spam_domains=len(spam),
     )
     yield
   log.info("shutdown_complete")
