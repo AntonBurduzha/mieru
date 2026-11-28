@@ -1,8 +1,8 @@
 ---
 id: T12
 title: Ingest defences
-mode: human
-status: build
+mode: agent
+status: done
 features: [I2]
 depends: [T11]
 branch: t12-ingest-defences
@@ -85,11 +85,40 @@ Names that prove a drop contain `drop`, for the feature check (`-k drop`).
 5. Within a minute: an `events_counted` line with `accepted` and `dropped` holding `bot` and `spam_referrer`.
 
 ## Where to debug
-Written before the developer's test.
+Paths are under `apps/backend/`. How to use the debugger: `docs/workflow.md`, "Debugging".
+
+| What it decides | Where | Reach it with | Look at |
+|---|---|---|---|
+| Hold, drop or write an accepted event | `src/mieru/ingest/delivery.py:59` (`send`): backpressure on line 61, the outage check on line 64, the limit on line 69, the `RedisError` on line 72 | the Cursor config `ingest`, then a browser `curl` (`-A 'Mozilla/5.0 Firefox/140.0'`) with Redis up, with `docker compose stop redis`, or with `STREAM_HIGH_WATER=2` in the environment; or `pytest: -k` with `fallback`, `rate_limited` or `backpressure` | `self.stream_length` and `self.high_water`; `len(self.queue)`; `count` and `accepted.rate_limit_per_min`. A request that takes 2 s during an outage means the queue check was skipped; a `redis_unavailable` header while the queue has room means `_hold` (line 77) refused it |
+| Writing held events back | `src/mieru/ingest/delivery.py:97` (`append_many` in `drain`), `remove_oldest` on line 101, called each second from `run` on line 113 | `ingest`: stop Redis, post three browser events, `docker compose start redis`; or `pytest: -k fallback_drain` | `batch`, oldest first, and `len(self.queue)` after the `MULTI`. `fallback_drained events=N` must match what was held. Events missing from `XRANGE events - +` with no `fallback_lost` mean a batch left the queue before Redis confirmed it |
+| What survives a stop | `src/mieru/ingest/app.py:62-65` (the exit stack, run in reverse), `flush` at `src/mieru/ingest/delivery.py:119` | `ingest` with Redis stopped and an event held, then Ctrl+C or a saved file; or `pytest: -k "lifespan_ends or lost"` | the log order: `fallback_lost` (or nothing, if the drain wrote all), then `events_counted`, then `shutdown_complete`. A held event that never reaches the stream although Redis was up at the stop means `flush` ran after Redis closed |
+| Bot or spam, before any Redis call | `src/mieru/ingest/pipeline.py:95` (`is_bot`) and line 97 (`is_spam_referrer`), the patterns at `src/mieru/ingest/bots.py:10` and the parent-domain loop on line 47 | `ingest` and `curl` with no `-A` (curl's own agent), or a body with `"r":"https://a.b.0-0.fr/"`; or `pytest: -k "bot or spam"` | `BOT_PATTERN.search(user_agent).group()` (never print the agent itself), and `labels`. A bot that shows `INCRBY` in `redis-cli MONITOR` got past this point |
 
 ## Notes
 - Drop counts stay in memory and are logged every 60 s (the developer's choice, at the spec): no Redis write per drop, and the counts survive a Redis outage. The cost: two replicas are summed by hand, and a crash loses up to a minute of counts. OpenTelemetry replaces the line after the MVP.
 - While the queue holds anything, new events join it without trying Redis, so no request waits on a dead Redis (up to the 2 s socket timeout), and the stream keeps post order. Held events skip the rate limit. A reply lost after `EXEC` can write a batch twice; the writer's dedup token doesn't cover that, because the stream ids differ.
 - The rate limit is a fixed window per UTC minute, shared by every ingest replica through Redis. At a window edge a site can get up to twice its limit in a minute.
+- Built in agent mode: on 2026-11-27, after the tests and the prototype, the developer asked Claude to build T12 and to give them a hands-on way to test it (logs, `breakpoint()`, `redis-cli`, SQL) instead of typing it.
+- Claude wrote the tests before the build, in human mode (`test-writer`, uncommitted). Two readings of the spec they fix:
+  - `Counters.take()` returns the tuple `(accepted, dropped)`;
+  - one `drain()` call empties the whole queue in batches of 500, so a 1,001-entry test needs three batches.
+- A prototype built from the spec alone, in a scratch worktree, passed all of them: 357 passed and e2e green, with ruff, format and mypy clean. Every test the developer's tree failed before the build was a new or replaced one (14 failed, 4 collection errors, 253 passed).
+- Review fix (should-fix): `Delivery.run` now survives any failure, not only a `RedisError`. It logs `delivery_failed` (`error_type`) and goes on, like `refresh_forever`, so a bug can't freeze `stream_length` or strand the queue. Test: `test_delivery_run_logs_a_failure_and_keeps_going`.
 
 ## Review
+**Reviewer, 2026-11-27:** 0 must-fix, 2 should-fix, 7 nits.
+1. [should-fix, fixed] `apps/backend/src/mieru/ingest/delivery.py:108`: `run` survived only a `RedisError`, so any other exception ended the task quietly, freezing `stream_length` and stranding the queue until a restart. Now it logs `delivery_failed` (`error_type`) and goes on, like `refresh_forever`; test `test_delivery_run_logs_a_failure_and_keeps_going`, and a row in `observability.md`.
+2. [should-fix, kept] `docs/roadmap.md`: edits that were already in the tree when the build started and aren't T12's: T14's mode `human` to `agent` (line 64), the comment under "## Now" removed, the M2 table re-padded. The "Why these are human tasks" list still names T14. In run 2 the developer chose to commit them as they are.
+3. [nit, left] `apps/backend/src/mieru/ingest/delivery.py:88`, `:98`: `check_stream` and `drain` swallow a `RedisError` without a log line, so a Redis that refuses writes (OOM under `noeviction`) shows only as one `redis_unavailable` and one `fallback_full`.
+4. [nit, left] `apps/backend/src/mieru/ingest/delivery.py:81`, `:104`: with `INGEST_FALLBACK_QUEUE=0`, `_full_logged` is never reset, so `fallback_full` is logged once per process, and every event logs `redis_unavailable`.
+5. [nit, left] `apps/backend/src/mieru/ingest/delivery.py:105`, `:124`: `fallback_drained` counts only the last `drain()` call, and `flush` returns 0 when its timeout fires after some batches. The app doesn't use either number.
+6. [nit, left] `apps/backend/src/mieru/ingest/counters.py:20`: `take()` returns `dict[DropReason, int]`, while the spec says `Counter[DropReason]`. They compare equal, so the tests pass.
+7. [nit, left] `apps/backend/src/mieru/ingest/bots.py:47`: a host with a trailing dot (`https://0-0.fr./`) isn't matched. Fix: `host.rstrip(".")` first.
+8. [nit, left] `apps/backend/tests/integration/ingest/test_defences.py:174`, `:310`: no test fails if `nx=True` is removed (the clock is frozen), and the 1,001-entry drain test passes with any batch size.
+9. [nit, left] `docs/conventions.md` section 2: the layering diagram has no `ingest/delivery`. Section 2 is outside the sections this spec allows.
+
+**Verifier, 2026-11-27: NEED_HUMAN.** 1 pass (exit 0, 62 passed) · 2 pass (23) · 3 pass (5) · 4 pass (2) · 5 pass (4) · 6 pass (10) · 7 pass (11) · 8 pass (1) · 9 human: "Test it yourself", in run 2 · `pytest` 358 passed, e2e 1 passed, ruff, format and mypy exit 0 · the wheel holds `mieru/ingest/referrer_spam.txt` · I2 feature check exit 0 (29 passed) · Scope clean · Test integrity clean.
+
+**Verifier, 2026-11-28: DONE.** Run again because `delivery.py` changed after the first verdict. 1 pass (62 passed) · 2 pass (23) · 3 pass (5) · 4 pass (2) · 5 pass (4) · 6 pass (10) · 7 pass (11) · 8 pass (1) · 9 human: confirmed in run 2 · `pytest` 358 passed, e2e 1 passed, ruff, format and mypy exit 0 · the wheel holds `mieru/ingest/referrer_spam.txt` · I2 feature check exit 0 (29 passed) · Scope clean · Test integrity clean.
+
+**Done, 2026-11-28:** the developer ran "Test it yourself" against the local app and confirmed criterion 9 with `/task T12`; final verdict DONE. I2 passes.

@@ -45,7 +45,7 @@
     "scope": "mvp",
     "task": "T12",
     "check": "uv run --directory apps/backend pytest tests/unit/ingest tests/integration/ingest -k drop",
-    "passes": false
+    "passes": true
   },
   {
     "id": "I3",

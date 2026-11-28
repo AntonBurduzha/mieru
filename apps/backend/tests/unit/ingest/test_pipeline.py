@@ -217,3 +217,80 @@ def test_salt_missing_for_yesterday_leaves_pvid_empty() -> None:
 
 def test_salt_missing_for_today_drops_the_event() -> None:
   assert run(parse_event(body()), salts={YESTERDAY: SALTS[YESTERDAY]}) == Dropped("no_salt")
+
+
+# Bots, spam referrers and the order of the drops
+
+GOOGLEBOT = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+CURL = "curl/8.7.1"
+SPAM_REFERRER = "https://0-0.fr/"  # the first domain of the shipped list
+
+
+def run_as(
+  event: IngestEvent,
+  *,
+  user_agent: str,
+  site: CachedSite = SITE,
+  salts: dict[date, bytes] = SALTS,
+) -> Accepted | Dropped:
+  """run() with the user agent the request sent."""
+  site_cache, salt_cache = SiteCache(), SaltCache()
+  site_cache.replace([site])
+  salt_cache.replace(salts)
+  return process(event, sites=site_cache, salts=salt_cache, ip=IP, user_agent=user_agent, now=NOON)
+
+
+@pytest.mark.parametrize("user_agent", ["", GOOGLEBOT, CURL], ids=["empty", "googlebot", "curl"])
+def test_bot_user_agent_is_dropped(user_agent: str) -> None:
+  assert run_as(parse_event(body()), user_agent=user_agent) == Dropped("bot")
+
+
+@pytest.mark.parametrize(
+  "referrer",
+  [SPAM_REFERRER, "https://www.0-0.fr/pricing", "https://blog.0-0.fr/"],
+  ids=["listed", "www", "subdomain"],
+)
+def test_spam_referrer_is_dropped(referrer: str) -> None:
+  assert run(parse_event(body(r=referrer))) == Dropped("spam_referrer")
+
+
+def test_unknown_site_is_dropped_before_bot() -> None:
+  assert run_as(parse_event(body(d="nope.example")), user_agent=CURL) == Dropped("unknown_site")
+
+
+@pytest.mark.parametrize("status", ["blocked", "over_quota"])
+def test_site_status_is_dropped_before_bot(status: Literal["blocked", "over_quota"]) -> None:
+  site = CachedSite(id=7, org_id=SITE.org_id, domain="example.com", status=status)
+  assert run_as(parse_event(body()), user_agent=CURL, site=site) == Dropped(status)
+
+
+def test_bot_is_dropped_before_spam_referrer() -> None:
+  assert run_as(parse_event(body(r=SPAM_REFERRER)), user_agent=CURL) == Dropped("bot")
+
+
+def test_bot_is_dropped_before_no_salt() -> None:
+  no_today = {YESTERDAY: SALTS[YESTERDAY]}
+  assert run_as(parse_event(body()), user_agent=CURL, salts=no_today) == Dropped("bot")
+
+
+def test_spam_referrer_is_dropped_before_no_salt() -> None:
+  no_today = {YESTERDAY: SALTS[YESTERDAY]}
+  assert run(parse_event(body(r=SPAM_REFERRER)), salts=no_today) == Dropped("spam_referrer")
+
+
+# The site's rate limit travels with the accepted event
+
+
+def test_accepted_carries_the_rate_limit_per_min_of_its_site() -> None:
+  site = CachedSite(
+    id=7, org_id=SITE.org_id, domain="example.com", status="active", rate_limit_per_min=3
+  )
+  result = run(parse_event(body()), site=site)
+  assert isinstance(result, Accepted)
+  assert result.rate_limit_per_min == 3
+
+
+def test_a_site_without_its_own_limit_is_accepted_at_6000_per_minute() -> None:
+  result = run(parse_event(body()))
+  assert isinstance(result, Accepted)
+  assert result.rate_limit_per_min == 6000

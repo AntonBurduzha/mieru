@@ -87,3 +87,19 @@ async def test_refresh_forever_survives_a_failed_refresh(db_session: AsyncSessio
 
   failures = [log for log in logs if log["event"] == "cache_refresh_failed"]
   assert failures[0]["error_type"] == "ConnectionRefusedError"
+
+
+async def test_refresh_puts_each_rate_limit_per_min_in_the_cache(db_session: AsyncSession) -> None:
+  limited = await make_site(db_session, domain="limited.example")
+  limited.rate_limit_per_min = 3
+  await make_site(db_session, domain="default-limit.example")
+  await db_session.flush()
+  sites, salts = SiteCache(), SaltCache()
+  await refresh_once(db_session, sites, salts, today=DAY)
+
+  cached = sites.get("limited.example")
+  assert cached is not None
+  assert cached.rate_limit_per_min == 3
+  default = sites.get("default-limit.example")
+  assert default is not None
+  assert default.rate_limit_per_min == 6000

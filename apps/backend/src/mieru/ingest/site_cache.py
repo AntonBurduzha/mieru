@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
+from mieru.models.site import DEFAULT_RATE_LIMIT_PER_MIN
 from mieru.services.sites import normalize_domain
 
 
@@ -13,6 +14,7 @@ class CachedSite:
   org_id: UUID
   domain: str
   status: str
+  rate_limit_per_min: int = DEFAULT_RATE_LIMIT_PER_MIN
 
 
 class SiteCache:

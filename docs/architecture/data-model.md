@@ -210,7 +210,7 @@ FROM (
 |---|---|---|---|
 | `events` | Stream + consumer group `writers` | Buffer between `ingest` and `writer`. Entry fields: [conventions.md](../conventions.md) section 5 | Entry deleted after acknowledgement. Never trimmed: `XADD` runs without `MAXLEN`, which would delete entries the writer hasn't stored |
 | `sess:{site_id}:{visitor_id}` | Hash | Session id, start, first-touch attributes | 30 min, reset on each event |
-| `rl:{site_id}:{minute}` | Counter | Per-site rate limit | 2 min |
+| `rl:{site_id}:{minute}` | Counter | Per-site rate limit: events of the site in one UTC minute, `minute` being the Unix time divided by 60 (`rl:7:29910960` is 2026-11-14 12:00 UTC). `ingest` runs `INCR` and `EXPIRE … 120 NX` in one pipeline (`mieru.ingest.stream.count_event`) and drops events past the site's `rate_limit_per_min` | 120 s from the first event of the minute; `NX` keeps later events from moving it |
 | `usage:{org_id}:{yyyymm}` | Counter | *(after MVP)* Events accepted this month | 60 days |
 | `cache:stats:{hash}` | String | Cached query result | 30 s or 24 h |
 | `alert:cooldown:{rule_id}` | Flag | *(after MVP)* Stops a rule firing repeatedly | 1 h |
